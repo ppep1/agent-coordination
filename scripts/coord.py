@@ -1042,19 +1042,20 @@ def cmd_prompt(args) -> int:
 
 In this repository:
 1. You own source edits, git state, verification, commits/pushes, and final user communication.
-2. Before each implementation increment, run:
+2. Before starting execution, perform one preflight review for missing permissions/services, destructive-risk commands, external logins/credentials, and conflicting requirements. Ask the user before starting if any exist; if none exist, state that normal local code edits, tests, commits, and pushes will not be reconfirmed phase by phase.
+3. Before each implementation increment, run:
    {coord_cmd} {repo_arg} blockers
    {coord_cmd} {repo_arg} open
    {coord_cmd} {repo_arg} status
-3. After each small increment, run targeted verification, then publish a change:
+4. After each small increment, run targeted verification, then publish a change:
    {coord_cmd} {repo_arg} change create --capture-diff --file <file> --summary "<summary>" --verify "<command>" --risk medium
-4. Do not wait for fresh reviewer/tester reports before continuing verified low/medium-risk increments.
-5. If blockers/fail/blocked appears, fix it before unrelated work.
-6. After fixing a blocker, close handled findings and reports with finding resolve and report resolve.
-7. Use show/open/timeline when you need detail on a change.
-8. After the user approves the route and says to start, do not stop at roadmap phase boundaries to report progress, ask whether to continue, or wait for confirmation; publish progress as changes/reports and continue to final delivery.
-9. Stop for human input only for missing permissions, destructive-risk operations, external credentials/logins, conflicting requirements, or explicit user interrupt.
-10. Before final handoff, run:
+5. Do not wait for fresh reviewer/tester reports before continuing verified low/medium-risk increments.
+6. If blockers/fail/blocked appears, fix it before unrelated work.
+7. After fixing a blocker, close handled findings and reports with finding resolve and report resolve.
+8. Use show/open/timeline when you need detail on a change.
+9. After the user approves the route and says to start, do not stop at roadmap phase boundaries to report progress, ask whether to continue, or wait for confirmation; publish progress as changes/reports and continue to final delivery.
+10. Stop for human input only for newly discovered permissions/credentials/destructive risk missed by preflight, conflicting requirements, environment interruption, or explicit user interrupt.
+11. Before final handoff, run:
    {coord_cmd} {repo_arg} doctor
    {coord_cmd} {repo_arg} blockers
    git status --short

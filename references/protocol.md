@@ -6,7 +6,7 @@ Use a local, ignored coordination directory as a structured append-only event lo
 
 This avoids manual copy/paste between agents while keeping all work recoverable after interruptions.
 
-The intended operating mode is unattended after startup. Main Codex may clarify the task and proposed route first, but once the user approves the route and says to start, it should continue until final delivery instead of stopping at every roadmap phase boundary for progress reports. Reviewer/Tester conversations receive their role prompts once, then keep working through `coord.py watch`, `coord.py report`, and `coord.py mark-processed` without asking the user to relay results.
+The intended operating mode is unattended after startup. Main Codex may clarify the task and proposed route first, then must do one preflight review for human-decision risks: missing permissions/services, destructive-risk commands, required external logins/credentials, or conflicting requirements. Once the user approves the route and any preflight decisions, Main should continue until final delivery instead of stopping at every roadmap phase boundary for progress reports. Reviewer/Tester conversations receive their role prompts once, then keep working through `coord.py watch`, `coord.py report`, and `coord.py mark-processed` without asking the user to relay results.
 
 ## Directory Contract
 
@@ -122,8 +122,10 @@ After every code-change cycle, run `coord.py blockers` and inspect `coord.py sta
 Resolve valid blocking findings from review/test reports before unrelated work or final handoff.
 Do not treat missing secondary reports as approval, but do not idle by default: if no new blocking report exists, continue the next verified small increment or commit/push when the user has asked for continuous delivery.
 If a late report finds a valid blocker after a commit/push, fix it in a follow-up change.
+Before starting execution, perform one preflight review for missing permissions/services, destructive-risk commands, required external logins/credentials, and conflicting requirements. Ask the user before starting if any exist.
 After the user approves the route and says to start, do not stop at roadmap phase boundaries to report progress, ask whether to continue, or wait for confirmation. Publish progress as coordination changes and continue.
-Stop for human input only for missing permissions, destructive-risk operations, required external credentials/logins, conflicting requirements, or explicit user interrupt.
+Normal local code edits, local tests, non-destructive build/format checks, commits, and pushes should not be reconfirmed phase by phase after delivery is authorized.
+Stop for human input only for newly discovered permissions/credentials/destructive risk missed by preflight, conflicting requirements, environment interruption, or explicit user interrupt.
 Before final response, run `coord.py doctor`, `coord.py blockers`, and `git status --short`.
 ```
 
@@ -237,7 +239,7 @@ If a watcher is interrupted:
 
 ## Practical Limits
 
-This protocol coordinates multiple Codex conversations/sessions, but each secondary conversation must still be started with the role prompt. Once started, it can periodically wait for changes. It is not a system daemon across app restarts unless the user runs it under an external process manager, and it cannot bypass Codex/application interrupts, context limits, system sleep, or missing permissions.
+This protocol coordinates multiple Codex conversations/sessions, but each secondary conversation must still be started with the role prompt. Once started, it can periodically wait for changes. It is not a system daemon across app restarts unless the user runs it under an external process manager, and it cannot bypass Codex/application interrupts, context limits, system sleep, process exit, or app restarts. Permission/credential/destructive-command risks should be handled by Main's startup preflight, not discovered through repeated phase-boundary confirmations.
 
 ## Self-Test
 

@@ -130,9 +130,9 @@ Initially there should usually be no changes and no blockers.
 
 Open three Codex conversations/sessions in the same project. They are all normal Codex chat interfaces; the difference is that each one receives a different role prompt and exchanges state through the same `.agent-coordination/` directory.
 
-The intended workflow is unattended after startup: Main Codex clarifies the task and route, waits for your explicit approval to start, then keeps going until final delivery. It should not stop at every roadmap phase boundary to report progress or ask whether to continue. Reviewer/Tester receive their prompts once and then need no further chat interaction; they work through `coord.py watch/report/mark-processed`. You can observe what they did at any time with `status/open/blockers/timeline/export-html`.
+The intended workflow is unattended after startup: Main Codex first clarifies the task and route, then performs one preflight review before execution. It should identify anything that needs a human decision: missing permissions or external services, destructive-risk commands, purchases/logins/credentials, or conflicting requirements. After you approve the route and how to handle those risks, Main keeps going until final delivery. It should not stop at every roadmap phase boundary to report progress or ask whether to continue. Reviewer/Tester receive their prompts once and then need no further chat interaction; they work through `coord.py watch/report/mark-processed`. You can observe what they did at any time with `status/open/blockers/timeline/export-html`.
 
-Human intervention should only be needed for missing permissions or services, destructive-risk commands, conflicting requirements, purchases/logins/credentials, or an explicit user interrupt. As long as the environment keeps running and permissions are sufficient, the loop can run for a long time unattended; it is not a daemon across app restarts.
+Normal code edits, reading project files, running local tests, running non-destructive build/format checks, committing, and pushing should not trigger mid-run confirmation after the user has authorized delivery. The limits this skill cannot solve are runtime limits: Codex/app interrupts, context limits, system sleep, process exit, and app restarts. As long as the environment keeps running and permissions are sufficient, the loop can run for a long time unattended; it is not a daemon across app restarts.
 
 ### Conversation 1: Main Codex
 
@@ -145,18 +145,19 @@ You are Main Codex. Use the agent-coordination skill.
 
 In this repository:
 1. You own source edits, git state, verification, commits/pushes, and final user communication.
-2. Before each implementation increment, run:
+2. Before starting, perform one preflight review: identify missing permissions/services, destructive-risk commands, external logins/credentials, and conflicting requirements. Ask the user first if any exist; if none exist, state that normal local code edits, tests, commits, and pushes will not be reconfirmed phase by phase.
+3. Before each implementation increment, run:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
-3. After each small increment, run targeted verification, then publish a change:
+4. After each small increment, run targeted verification, then publish a change:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create --capture-diff --file <file> --summary "<summary>" --verify "<command>" --risk medium
-4. Do not wait for fresh reviewer/tester reports before continuing verified low/medium-risk increments.
-5. If blockers/fail/blocked appears, fix it before unrelated work.
-6. After fixing a blocker, close handled findings and reports with finding resolve and report resolve.
-7. After the user approves the route and says to start, do not stop at roadmap phase boundaries to report progress, ask whether to continue, or wait for confirmation; publish phase progress as changes/reports and continue to final delivery.
-8. Stop for human input only for missing permissions, destructive-risk operations, external credentials, conflicting requirements, or explicit user interrupt.
-9. Before final handoff, run:
+5. Do not wait for fresh reviewer/tester reports before continuing verified low/medium-risk increments.
+6. If blockers/fail/blocked appears, fix it before unrelated work.
+7. After fixing a blocker, close handled findings and reports with finding resolve and report resolve.
+8. After the user approves the route and says to start, do not stop at roadmap phase boundaries to report progress, ask whether to continue, or wait for confirmation; publish phase progress as changes/reports and continue to final delivery.
+9. Stop for human input only for newly discovered permissions/credentials/destructive risk missed by preflight, conflicting requirements, environment interruption, or explicit user interrupt.
+10. Before final handoff, run:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
    git status --short
@@ -479,7 +480,8 @@ GitHub Actions runs the same baseline checks: `py_compile` and `scripts/test_coo
 
 ## Limits
 
-- This is not a daemon or cloud orchestration platform.
+- This is not a daemon or cloud orchestration platform; it cannot bypass Codex/app interrupts, context limits, system sleep, process exits, or app restarts.
+- Permissions, destructive-risk commands, external logins/credentials, and conflicting requirements should be found in Main's startup preflight and asked about once; normal code edits, local tests, commits, and pushes should not interrupt every phase.
 - Reviewer and Tester Codex conversations/sessions still need to be started with role-specific prompts.
 - Task leases are local coordination-state locks, not distributed locks across machines.
 - File locking currently uses Unix `fcntl`, so macOS/Linux are the intended environments.
