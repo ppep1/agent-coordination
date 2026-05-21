@@ -45,12 +45,15 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . show chg_0001
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . timeline chg_0001
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . export-html
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt main
 ```
 
 Publish a change:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create \
+  --capture-diff \
   --file src/example.py \
   --summary "Short implementation summary" \
   --verify "pytest tests/test_example.py" \
@@ -167,6 +170,14 @@ Important event types:
 - `task.claimed`
 - `task.released`
 - `task.completed`
+
+`change.created` may include `diff_path` when Main publishes with `--capture-diff`. Reviewers should inspect that snapshot first because Main may keep editing after the change is published.
+
+## Report Quality Gates
+
+- `report review --decision blocking` requires at least one `--finding`.
+- `report test --decision fail` requires at least one `--command` or `--finding`.
+- `report test --decision blocked` requires at least one `--untested`.
 
 ## Recovery
 

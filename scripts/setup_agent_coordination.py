@@ -86,7 +86,7 @@ def main() -> int:
     Rules:
     1. Own implementation, git state, verification, commits/pushes, and final user communication.
     2. Before a new increment, run `coord.py blockers`, `coord.py open`, and `coord.py status`; fix valid blockers first.
-    3. Keep increments small. After each meaningful implementation step, run targeted verification and publish a structured change with `coord.py change create`.
+    3. Keep increments small. After each meaningful implementation step, run targeted verification and publish a structured change with `coord.py change create --capture-diff` when the repo is git-backed.
     4. Treat missing secondary reports as "not reviewed yet", not as approval, but do not idle on verified low/medium-risk increments.
     5. Resolve valid blocking findings from review/test reports before unrelated work or final handoff.
     6. Do not let secondary agents edit source files unless a task explicitly grants a narrow write scope.
@@ -95,7 +95,7 @@ def main() -> int:
     Change entry template:
 
     ```bash
-    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create \\
+    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create --capture-diff \\
       --file src/example.py \\
       --summary "Short implementation summary" \\
       --verify "pytest tests/test_example.py" \\
@@ -112,7 +112,7 @@ def main() -> int:
     Rules:
     1. Do not edit source files, commit, push, reset, delete files, install dependencies, or run broad formatters.
     2. Watch and claim structured changes with `coord.py watch --claim`.
-    3. When a new change appears, inspect the touched files and relevant contracts only.
+    3. When a new change appears, inspect the diff snapshot when present, touched files, and relevant contracts only.
     4. Report concrete bugs, regressions, missing tests, compatibility risks, and unsafe assumptions. Avoid style-only findings unless they hide a real defect.
     5. Publish a review with `coord.py report review`, including `--files-read` for inspected files and `--finding` for material findings.
     6. Use `pass` only when no material issue remains, `concerns` for non-blocking risks, and `blocking` for issues Main must fix before unrelated work or final handoff.

@@ -58,7 +58,7 @@ After each meaningful implementation step:
 1. Run `coord.py blockers`, `coord.py open`, and `coord.py status`; fix valid blockers first.
 2. Implement one small, coherent increment.
 3. Run targeted verification.
-4. Publish a structured change event with `coord.py change create`; this also appends `.agent-coordination/changes.md`.
+4. Publish a structured change event with `coord.py change create --capture-diff` when the target repo is git-backed; this also appends `.agent-coordination/changes.md`.
 5. Include files touched, summary, verification, risk, and any open questions in the summary if needed.
 6. Immediately run `coord.py blockers` and inspect `coord.py status`.
 7. If no new review/test entry exists for the latest change, do **not** idle by default. Continue the next small useful increment, or commit/push the verified change when the user has asked for continuous delivery.
@@ -76,6 +76,7 @@ Use this command shape:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create \
+  --capture-diff \
   --file TargetDetection_stack.py \
   --summary "Short description of the implementation increment" \
   --verify "pytest tests/test_target_detection.py" \
@@ -103,6 +104,8 @@ Inspect active work and history:
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . show chg_0003
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . timeline chg_0003
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . export-html
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt reviewer --actor reviewer-a
 ```
 
 Compatibility Markdown entries must still be appended at EOF. Do not insert entries by patching against repeated text such as `Open Questions: - none`; older watchers determine the newest change from the last `## Change ...` heading in the file.
@@ -117,7 +120,7 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --rol
 
 When the watcher reports a new change:
 
-1. Read the reported change id, files, verification, and risk from `coord.py watch`; read `.agent-coordination/changes.md` only if useful.
+1. Read the reported change id, files, verification, risk, and diff path from `coord.py watch`; inspect the diff snapshot first when present.
 2. Perform the assigned review/test.
 3. Publish results with `coord.py report review` or `coord.py report test`; this also appends Markdown reports.
 4. Mark that change as processed; this completes the claimed task:
@@ -173,6 +176,13 @@ Reviewer validation guidelines:
 - Do not report style-only nits unless they hide a concrete maintainability or correctness risk.
 - Use `pass` only when no material issue remains, `concerns` for non-blocking risks, and `blocking` for issues Main must fix before unrelated work or final handoff.
 - Include `--files-read` for inspected files and `--finding "severity:file:line:message"` for material findings.
+- `blocking` review reports must include at least one `--finding`.
+
+Report quality gates:
+
+- `report review --decision blocking` requires at least one `--finding`.
+- `report test --decision fail` requires at least one `--command` or `--finding`.
+- `report test --decision blocked` requires at least one `--untested`.
 
 ## Continuous Delivery Pattern
 

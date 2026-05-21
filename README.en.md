@@ -126,9 +126,10 @@ In this repository:
 1. You own source edits, git state, verification, commits/pushes, and final user communication.
 2. Before each implementation increment, run:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
+   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
 3. After each small increment, run targeted verification, then publish a change:
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create --file <file> --summary "<summary>" --verify "<command>" --risk medium
+   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create --capture-diff --file <file> --summary "<summary>" --verify "<command>" --risk medium
 4. Do not wait for fresh reviewer/tester reports before continuing verified low/medium-risk increments.
 5. If blockers/fail/blocked appears, fix it before unrelated work.
 6. After fixing a blocker, close handled findings and reports with finding resolve and report resolve.
@@ -138,12 +139,19 @@ In this repository:
    git status --short
 ```
 
+You can also generate the latest prompt:
+
+```bash
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt main
+```
+
 After Main finishes a small change, publish it:
 
 ```bash
 pytest tests/test_parser.py
 
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create \
+  --capture-diff \
   --file src/parser.py \
   --summary "Add empty input validation" \
   --verify "pytest tests/test_parser.py" \
@@ -172,13 +180,19 @@ Rules:
 2. Perform read-only code review only.
 3. Wait for and claim new changes:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --claim --interval 60
-4. When a change appears, read change_id, files, verification, and risk from the output.
-5. Review touched files and relevant contracts. Report only real defects, regressions, compatibility risks, missing tests, security issues, or concurrency issues.
+4. When a change appears, read change_id, files, verification, risk, and diff_path from the output.
+5. Review the diff snapshot first when present, then touched files and relevant contracts. Report only real defects, regressions, compatibility risks, missing tests, security issues, or concurrency issues.
 6. Publish a report:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review --actor reviewer-a --change <change_id> --decision pass|concerns|blocking --files-read <file> --finding "severity:file:line:message"
 7. After reporting, mark processed; this completes the claimed task:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed --role reviewer --actor reviewer-a --change <change_id>
 8. Then watch again.
+```
+
+You can also generate the latest prompt:
+
+```bash
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt reviewer --actor reviewer-a
 ```
 
 Start watching:
@@ -334,6 +348,7 @@ Main fixes the issue and publishes a follow-up change:
 pytest tests/test_parser.py
 
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create \
+  --capture-diff \
   --file src/parser.py \
   --file tests/test_parser.py \
   --summary "Handle empty and whitespace-only parser input" \
@@ -359,6 +374,14 @@ Expected output:
 ```text
 No open blockers.
 ```
+
+To share the current coordination state, export the HTML dashboard:
+
+```bash
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . export-html
+```
+
+The default output is `.agent-coordination/reports/status.html`.
 
 ## Recommended Daily Loop
 
@@ -396,7 +419,7 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . claim --rol
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . release --role reviewer --actor reviewer-a --change chg_0001
 
 # Change lifecycle
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create --file src/a.py --summary "..." --verify "pytest ..."
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create --capture-diff --file src/a.py --summary "..." --verify "pytest ..."
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change verify chg_0001
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change commit chg_0001
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change push chg_0001
@@ -405,6 +428,11 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change push
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review --change chg_0001 --decision pass
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test --change chg_0001 --decision pass --command "pytest"
 
+# Prompts and dashboard
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt main
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt reviewer --actor reviewer-a
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . export-html
+
 # Resolve handled issues
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . finding resolve fnd_abc123 --reason "Fixed in chg_0002"
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report resolve rpt_abc123 --reason "Fixed and verified in chg_0002"
@@ -412,7 +440,7 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report reso
 
 ## Run Self-Test
 
-The skill includes an end-to-end test script. It uses a temporary directory and validates init, change creation, claim/lease, reports, mark-processed, show/open/timeline, resolve, and rebuild:
+The skill includes an end-to-end test script. It uses a temporary directory and validates init, change creation, diff snapshots, claim/lease, report quality gates, reports, mark-processed, show/open/timeline, prompt, export-html, resolve, and rebuild:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/test_coord.py
@@ -426,5 +454,5 @@ python3 ~/.codex/skills/agent-coordination/scripts/test_coord.py
 
 - This is not a daemon or cloud orchestration platform.
 - Reviewer and Tester terminals still need to be started with role-specific prompts.
-- There is no task lease yet, so multiple watchers can still process the same change.
+- Task leases are local coordination-state locks, not distributed locks across machines.
 - File locking currently uses Unix `fcntl`, so macOS/Linux are the intended environments.

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import argparse
 import fcntl
+import html
 import json
 import sqlite3
+import subprocess
 import time
 import uuid
 from contextlib import contextmanager
@@ -328,6 +330,7 @@ def format_change_payload(event: dict, seq: Optional[int] = None) -> dict:
         "files": event.get("files", []),
         "verification": event.get("verification", []),
         "risk": event.get("risk", ""),
+        "diff_path": event.get("diff_path", ""),
     }
     if seq is not None:
         payload = {"seq": seq, **payload}
@@ -360,6 +363,9 @@ def append_markdown_change(coord: Path, event: dict) -> None:
         "",
         "Risk:",
         f"- {event.get('risk', 'medium')}",
+        "",
+        "Artifacts:",
+        f"- diff: {event.get('diff_path') or 'none'}",
         "",
         "Open Questions:",
         "- none",
@@ -409,6 +415,30 @@ def with_finding_ids(findings: List[dict]) -> List[dict]:
     return [{**finding, "id": finding.get("id") or f"fnd_{uuid.uuid4().hex[:12]}"} for finding in findings]
 
 
+def capture_git_diff(repo: Path, coord: Path, change_id: str, files: List[str]) -> str:
+    artifacts = coord / "artifacts"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    diff_path = artifacts / f"{change_id}.diff"
+    cmd = ["git", "-C", str(repo), "diff", "--"]
+    if files:
+        cmd.extend(files)
+    result = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "git diff failed")
+    diff_path.write_text(result.stdout, encoding="utf-8")
+    return str(diff_path.relative_to(coord))
+
+
+def validate_report(role: str, args, findings: List[dict]) -> Optional[str]:
+    if role == "reviewer" and args.decision == "blocking" and not findings:
+        return "review blocking reports require at least one --finding"
+    if role == "tester" and args.decision == "fail" and not args.command and not findings:
+        return "test fail reports require at least one --command or --finding"
+    if role == "tester" and args.decision == "blocked" and not args.untested:
+        return "test blocked reports require at least one --untested reason"
+    return None
+
+
 def cmd_init(args) -> int:
     coord = coord_dir(Path(args.repo))
     with locked(coord):
@@ -429,9 +459,17 @@ def cmd_rebuild(args) -> int:
 
 
 def cmd_change_create(args) -> int:
-    coord = coord_dir(Path(args.repo))
+    repo = Path(args.repo).expanduser().resolve()
+    coord = coord_dir(repo)
     with locked(coord):
         change_id = args.id or next_change_id(coord)
+        diff_path = ""
+        if args.capture_diff:
+            try:
+                diff_path = capture_git_diff(repo, coord, change_id, args.file)
+            except RuntimeError as exc:
+                print(f"DIFF_CAPTURE_FAILED {exc}")
+                return 2
         event = append_event(
             coord,
             "change.created",
@@ -443,6 +481,7 @@ def cmd_change_create(args) -> int:
                 "summary": args.summary,
                 "verification": args.verify,
                 "risk": args.risk,
+                "diff_path": diff_path,
             },
         )
         append_markdown_change(coord, event)
@@ -464,11 +503,16 @@ def cmd_change_event(args, event_type: str) -> int:
 def cmd_report(args, role: str) -> int:
     coord = coord_dir(Path(args.repo))
     event_type = "review.completed" if role == "reviewer" else "test.completed"
+    findings = with_finding_ids([parse_finding(item) for item in getattr(args, "finding", [])])
+    validation_error = validate_report(role, args, findings)
+    if validation_error:
+        print(f"INVALID_REPORT {validation_error}")
+        return 2
     payload = {
         "report_id": args.id or f"rpt_{uuid.uuid4().hex[:12]}",
         "change_id": args.change,
         "decision": args.decision,
-        "findings": with_finding_ids([parse_finding(item) for item in getattr(args, "finding", [])]),
+        "findings": findings,
     }
     if role == "tester":
         payload.update({"commands": args.command, "result": args.result or args.decision, "untested": args.untested})
@@ -741,6 +785,7 @@ def cmd_show(args) -> int:
         "change": dict(change),
         "files": files,
         "verification": event.get("verification", []),
+        "diff_path": event.get("diff_path", ""),
         "tasks": tasks,
         "reports": reports,
         "findings": findings,
@@ -896,6 +941,176 @@ def cmd_doctor(args) -> int:
     return 0
 
 
+def cmd_prompt(args) -> int:
+    coord_cmd = "python3 ~/.codex/skills/agent-coordination/scripts/coord.py"
+    repo_arg = "--repo ."
+    role = args.role
+    actor = args.actor
+    if role == "main":
+        text = f"""You are Main Codex. Use the agent-coordination skill.
+
+In this repository:
+1. You own source edits, git state, verification, commits/pushes, and final user communication.
+2. Before each implementation increment, run:
+   {coord_cmd} {repo_arg} blockers
+   {coord_cmd} {repo_arg} open
+   {coord_cmd} {repo_arg} status
+3. After each small increment, run targeted verification, then publish a change:
+   {coord_cmd} {repo_arg} change create --capture-diff --file <file> --summary "<summary>" --verify "<command>" --risk medium
+4. Do not wait for fresh reviewer/tester reports before continuing verified low/medium-risk increments.
+5. If blockers/fail/blocked appears, fix it before unrelated work.
+6. After fixing a blocker, close handled findings and reports with finding resolve and report resolve.
+7. Use show/open/timeline when you need detail on a change.
+8. Before final handoff, run:
+   {coord_cmd} {repo_arg} doctor
+   {coord_cmd} {repo_arg} blockers
+   git status --short
+"""
+    elif role == "reviewer":
+        text = f"""You are Reviewer Codex. Use the agent-coordination skill.
+
+Rules:
+1. Do not edit source files, commit, push, reset, install dependencies, or run broad formatters.
+2. Perform read-only code review only.
+3. Wait for and claim new changes:
+   {coord_cmd} {repo_arg} watch --role reviewer --actor {actor} --claim --interval 60
+4. When a change appears, read change_id, files, verification, risk, and diff_path from the output.
+5. Review the diff snapshot when present, then touched files and relevant contracts.
+6. Report only real defects, regressions, compatibility risks, missing tests, security issues, or concurrency issues.
+7. Publish a report:
+   {coord_cmd} {repo_arg} report review --actor {actor} --change <change_id> --decision pass|concerns|blocking --files-read <file> --finding "severity:file:line:message"
+8. After reporting, mark processed:
+   {coord_cmd} {repo_arg} mark-processed --role reviewer --actor {actor} --change <change_id>
+9. Then watch again.
+"""
+    elif role == "tester":
+        text = f"""You are Tester Codex. Use the agent-coordination skill.
+
+Rules:
+1. Do not edit source files, commit, push, reset, install dependencies, or run destructive commands.
+2. Do not fake hardware, vendor SDK, or external-service coverage.
+3. Wait for and claim new changes:
+   {coord_cmd} {repo_arg} watch --role tester --actor {actor} --claim --interval 60
+4. When a change appears, run the listed verification command first when safe, then add focused tests based on touched files.
+5. Publish a test report:
+   {coord_cmd} {repo_arg} report test --actor {actor} --change <change_id> --decision pass|fail|blocked --command "<command>" --untested "<reason>"
+6. After reporting, mark processed:
+   {coord_cmd} {repo_arg} mark-processed --role tester --actor {actor} --change <change_id>
+7. Then watch again.
+"""
+    else:
+        print(f"UNKNOWN_ROLE {role}")
+        return 2
+    print(text.rstrip())
+    return 0
+
+
+def html_attr(value: object) -> str:
+    return html.escape(str(value), quote=True)
+
+
+def cmd_export_html(args) -> int:
+    coord = coord_dir(Path(args.repo))
+    conn = connect(coord)
+    changes = [dict(row) for row in conn.execute("select * from changes order by created_at desc").fetchall()]
+    tasks = [dict(row) for row in conn.execute("select * from tasks order by change_id, role").fetchall()]
+    reports = [dict(row) for row in conn.execute("select * from reports order by created_at desc").fetchall()]
+    findings = [dict(row) for row in conn.execute("select * from findings order by change_id, id").fetchall()]
+    events = [dict(row) for row in conn.execute("select seq, type, actor, ts, payload from events order by seq desc limit 80").fetchall()]
+    conn.close()
+
+    tasks_by_change = {}
+    for task in tasks:
+        tasks_by_change.setdefault(task["change_id"], []).append(task)
+    reports_by_change = {}
+    for report in reports:
+        reports_by_change.setdefault(report["change_id"], []).append(report)
+    findings_by_change = {}
+    for finding in findings:
+        findings_by_change.setdefault(finding["change_id"], []).append(finding)
+
+    rows = []
+    for change in changes:
+        change_id = change["id"]
+        task_text = "<br>".join(
+            f"{html_attr(t['role'])}: {html_attr(t['status'])}"
+            + (f" by {html_attr(t['claimed_by'])}" if t.get("claimed_by") else "")
+            for t in tasks_by_change.get(change_id, [])
+        ) or "-"
+        report_text = "<br>".join(
+            f"{html_attr(r['role'])}: {html_attr(r['decision'])} ({html_attr(r['status'])})"
+            for r in reports_by_change.get(change_id, [])
+        ) or "-"
+        finding_text = "<br>".join(
+            f"{html_attr(f['severity'])} {html_attr(f['file'])}:{html_attr(f['line'])} {html_attr(f['message'])} ({html_attr(f['status'])})"
+            for f in findings_by_change.get(change_id, [])
+        ) or "-"
+        rows.append(
+            "<tr>"
+            f"<td>{html_attr(change_id)}</td>"
+            f"<td>{html_attr(change['status'])}</td>"
+            f"<td>{html_attr(change['summary'])}</td>"
+            f"<td>{task_text}</td>"
+            f"<td>{report_text}</td>"
+            f"<td>{finding_text}</td>"
+            "</tr>"
+        )
+
+    event_rows = []
+    for event in events:
+        payload = json.loads(event["payload"])
+        detail = payload.get("change_id") or payload.get("report_id") or payload.get("finding_id") or ""
+        event_rows.append(
+            "<tr>"
+            f"<td>{html_attr(event['seq'])}</td>"
+            f"<td>{html_attr(event['ts'])}</td>"
+            f"<td>{html_attr(event['type'])}</td>"
+            f"<td>{html_attr(event['actor'])}</td>"
+            f"<td>{html_attr(detail)}</td>"
+            "</tr>"
+        )
+
+    document = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Coordination Status</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px; color: #172033; }}
+    h1, h2 {{ margin-bottom: 8px; }}
+    .muted {{ color: #667085; }}
+    table {{ width: 100%; border-collapse: collapse; margin: 16px 0 32px; }}
+    th, td {{ border: 1px solid #d8dee8; padding: 10px; text-align: left; vertical-align: top; font-size: 14px; }}
+    th {{ background: #f5f7fa; }}
+    tr:nth-child(even) td {{ background: #fbfcfe; }}
+  </style>
+</head>
+<body>
+  <h1>Agent Coordination Status</h1>
+  <p class="muted">Generated at {html_attr(now_iso())}</p>
+  <h2>Changes</h2>
+  <table>
+    <thead><tr><th>Change</th><th>Status</th><th>Summary</th><th>Tasks</th><th>Reports</th><th>Findings</th></tr></thead>
+    <tbody>{''.join(rows) or '<tr><td colspan="6">No changes</td></tr>'}</tbody>
+  </table>
+  <h2>Recent Events</h2>
+  <table>
+    <thead><tr><th>Seq</th><th>Time</th><th>Type</th><th>Actor</th><th>Ref</th></tr></thead>
+    <tbody>{''.join(event_rows) or '<tr><td colspan="5">No events</td></tr>'}</tbody>
+  </table>
+</body>
+</html>
+"""
+    output = Path(args.output).expanduser()
+    if not output.is_absolute():
+        output = coord / output
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(document, encoding="utf-8")
+    print(output)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Structured local coordination CLI for multi-Codex workflows.")
     parser.add_argument("--repo", default=".", help="Repository root.")
@@ -917,6 +1132,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--summary", required=True)
     create.add_argument("--verify", action="append", default=[])
     create.add_argument("--risk", default="medium")
+    create.add_argument("--capture-diff", action="store_true")
     create.set_defaults(func=cmd_change_create)
     for name, event_type in (("verify", "change.verified"), ("commit", "change.committed"), ("push", "change.pushed")):
         sp = change_sub.add_parser(name)
@@ -964,6 +1180,13 @@ def build_parser() -> argparse.ArgumentParser:
     timeline = sub.add_parser("timeline")
     timeline.add_argument("change")
     timeline.set_defaults(func=cmd_timeline)
+    prompt = sub.add_parser("prompt")
+    prompt.add_argument("role", choices=("main", "reviewer", "tester"))
+    prompt.add_argument("--actor", default="reviewer-a")
+    prompt.set_defaults(func=cmd_prompt)
+    export_html = sub.add_parser("export-html")
+    export_html.add_argument("--output", default="reports/status.html")
+    export_html.set_defaults(func=cmd_export_html)
     finding = sub.add_parser("finding")
     finding_sub = finding.add_subparsers(dest="finding_cmd", required=True)
     resolve = finding_sub.add_parser("resolve")

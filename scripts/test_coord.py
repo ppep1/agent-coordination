@@ -23,6 +23,15 @@ def run_cmd(*args: str, repo: Path, check: bool = True) -> subprocess.CompletedP
 
 
 def setup_repo(repo: Path) -> None:
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    subprocess.run(["git", "config", "user.name", "Coord Test"], cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    subprocess.run(["git", "config", "user.email", "coord-test@example.com"], cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    (repo / "src").mkdir()
+    (repo / "tests").mkdir()
+    (repo / "src" / "example.py").write_text("def value():\n    return 1\n", encoding="utf-8")
+    (repo / "tests" / "test_example.py").write_text("from src.example import value\n\ndef test_value():\n    assert value() == 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    subprocess.run(["git", "commit", "-m", "Initial"], cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     subprocess.run(
         ["python3", str(SETUP), "--repo", str(repo)],
         text=True,
@@ -50,9 +59,12 @@ def main() -> int:
         assert unknown.returncode == 2
         assert_contains(unknown.stdout, "UNKNOWN_CHANGE")
 
+        (repo / "src" / "example.py").write_text("def value():\n    return 2\n", encoding="utf-8")
+
         change = run_cmd(
             "change",
             "create",
+            "--capture-diff",
             "--file",
             "src/example.py",
             "--summary",
@@ -70,6 +82,8 @@ def main() -> int:
         assert claim_payload["change_id"] == change
         assert claim_payload["claimed_by"] == "reviewer-a"
         assert claim_payload["verification"] == ["pytest tests/test_example.py"]
+        assert claim_payload["diff_path"] == "artifacts/chg_0001.diff"
+        assert_contains((repo / ".agent-coordination" / "artifacts" / "chg_0001.diff").read_text(encoding="utf-8"), "return 2")
 
         duplicate_claim = run_cmd("claim", "--role", "reviewer", "--actor", "reviewer-b", repo=repo, check=False)
         assert duplicate_claim.returncode == 2
@@ -89,6 +103,21 @@ def main() -> int:
         )
         assert blocked_report.returncode == 2
         assert_contains(blocked_report.stdout, "TASK_CLAIMED_BY reviewer-a")
+
+        bad_blocking = run_cmd(
+            "report",
+            "review",
+            "--actor",
+            "reviewer-a",
+            "--change",
+            change,
+            "--decision",
+            "blocking",
+            repo=repo,
+            check=False,
+        )
+        assert bad_blocking.returncode == 2
+        assert_contains(bad_blocking.stdout, "INVALID_REPORT")
 
         report_id = run_cmd(
             "report",
@@ -137,6 +166,7 @@ def main() -> int:
         show = run_cmd("show", change, repo=repo)
         show_payload = json.loads(show.stdout)
         assert show_payload["change"]["id"] == change
+        assert show_payload["diff_path"] == "artifacts/chg_0001.diff"
         assert show_payload["tasks"][0]["status"] == "completed"
 
         timeline = run_cmd("timeline", change, repo=repo)
@@ -156,6 +186,15 @@ def main() -> int:
         run_cmd("rebuild", repo=repo)
         rebuilt = run_cmd("blockers", repo=repo)
         assert_contains(rebuilt.stdout, "No open blockers.")
+
+        prompt = run_cmd("prompt", "reviewer", "--actor", "reviewer-z", repo=repo)
+        assert_contains(prompt.stdout, "reviewer-z")
+        assert_contains(prompt.stdout, "watch --role reviewer")
+
+        html_report = run_cmd("export-html", repo=repo).stdout.strip()
+        html_path = Path(html_report)
+        assert html_path.exists()
+        assert_contains(html_path.read_text(encoding="utf-8"), "Agent Coordination Status")
 
         second_change = run_cmd(
             "change",
