@@ -121,6 +121,22 @@ The intended workflow is unattended after startup: Main Codex first clarifies th
 
 Normal code edits, reading project files, running local tests, running non-destructive build/format checks, committing, and pushing should not trigger mid-run confirmation after the user has authorized delivery. The limits this skill cannot solve are runtime limits: Codex/app interrupts, context limits, system sleep, process exit, and app restarts.
 
+### One-Line Role Startup
+
+Role prompts are fixed templates, and `coord.py prompt <role>` is the source of truth. You do not need to manually copy prompt output. In a newly opened Codex conversation, send a fixed startup message that tells it to run the prompt command and follow the output.
+
+If the Codex conversation is already in the target repository, send the matching startup message directly. If you are not sure about the working directory, add “first cd to `/path/to/your/repo`” to the startup message.
+
+Reviewer startup message example:
+
+```text
+Start as Reviewer Codex. First confirm the current directory is the target repo, then run:
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt reviewer --actor reviewer-a
+Read the full role prompt printed by that command and follow it strictly. After startup, do not wait for another task from me; enter the watch/claim/review/report/mark-processed loop.
+```
+
+Main, Tester, and Observer startup messages are listed below.
+
 ### Conversation 1: Main Codex
 
 Main Codex owns implementation, verification, change publication, blocker handling, commits/pushes, and final user delivery.
@@ -128,8 +144,15 @@ Main Codex owns implementation, verification, change publication, blocker handli
 How to use it:
 
 1. Open the first Codex conversation in the target repository.
-2. Generate the Main prompt, copy the output, and paste it into that conversation.
-3. Send your task to Main and let it perform the preflight review. After you approve the start, Main keeps going.
+2. Send this message to that conversation:
+
+```text
+Start as Main Codex. First confirm the current directory is the target repo, then run:
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt main
+Read the full role prompt printed by that command and follow it strictly. I will send the task next; perform the preflight review first, then after I approve the start, continue to final delivery.
+```
+
+3. Send your task to Main. It will perform the preflight review first, then keep going after you approve the start.
 
 Main's key rules:
 
@@ -147,8 +170,15 @@ Reviewer Codex is a read-only review role. After receiving its role prompt, it e
 How to use it:
 
 1. Open the second Codex conversation in the same target repository.
-2. Generate the Reviewer prompt, copy the output, and paste it into that conversation.
-3. Do not give Reviewer a separate task. It will enter the watch loop from the prompt, then automatically claim, review, report, and mark processed after Main publishes a change.
+2. Send this message to that conversation:
+
+```text
+Start as Reviewer Codex. First confirm the current directory is the target repo, then run:
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt reviewer --actor reviewer-a
+Read the full role prompt printed by that command and follow it strictly. After startup, do not wait for another task from me; enter the watch/claim/review/report/mark-processed loop.
+```
+
+3. Do not give Reviewer a separate task. It will automatically claim, review, report, and mark processed after Main publishes a change.
 
 Reviewer responsibility boundaries:
 
@@ -163,8 +193,15 @@ Tester Codex performs real validation. After receiving its role prompt, it enter
 How to use it:
 
 1. Open the third Codex conversation in the same target repository.
-2. Generate the Tester prompt, copy the output, and paste it into that conversation.
-3. Do not give Tester a separate task. It will enter the watch loop from the prompt, then automatically claim, verify, report, and mark processed after Main publishes a change.
+2. Send this message to that conversation:
+
+```text
+Start as Tester Codex. First confirm the current directory is the target repo, then run:
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt tester --actor tester-a
+Read the full role prompt printed by that command and follow it strictly. After startup, do not wait for another task from me; enter the watch/claim/test/report/mark-processed loop.
+```
+
+3. Do not give Tester a separate task. It will automatically claim, verify, report, and mark processed after Main publishes a change.
 
 Tester responsibility boundaries:
 
@@ -180,7 +217,14 @@ Observer Codex is an optional user-facing status role. Use a lightweight model w
 How to use it:
 
 1. Open the fourth Codex conversation in the same target repository. Use a lightweight model if available.
-2. Generate the Observer prompt, copy the output, and paste it into that conversation.
+2. Send this message to that conversation:
+
+```text
+Start as Observer Codex. First confirm the current directory is the target repo, then run:
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt observer --actor observer-a
+Read the full role prompt printed by that command and follow it strictly. Only answer my status questions; do not participate in implementation, review, testing, or task coordination.
+```
+
 3. Ask Observer status questions such as “What has happened?”, “Are there blockers?”, or “What did Reviewer/Tester do?”.
 
 Observer responsibility boundaries:
