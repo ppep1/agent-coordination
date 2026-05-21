@@ -24,12 +24,23 @@ def run_cmd(*args: str, repo: Path, check: bool = True) -> subprocess.CompletedP
 
 def setup_repo(repo: Path) -> None:
     subprocess.run(["git", "init", "-b", "main"], cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-    subprocess.run(["git", "config", "user.name", "Coord Test"], cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-    subprocess.run(["git", "config", "user.email", "coord-test@example.com"], cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    subprocess.run(
+        ["git", "config", "user.name", "Coord Test"], cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "coord-test@example.com"],
+        cwd=repo,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
     (repo / "src").mkdir()
     (repo / "tests").mkdir()
     (repo / "src" / "example.py").write_text("def value():\n    return 1\n", encoding="utf-8")
-    (repo / "tests" / "test_example.py").write_text("from src.example import value\n\ndef test_value():\n    assert value() == 1\n", encoding="utf-8")
+    (repo / "tests" / "test_example.py").write_text(
+        "from src.example import value\n\ndef test_value():\n    assert value() == 1\n", encoding="utf-8"
+    )
     subprocess.run(["git", "add", "."], cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     subprocess.run(["git", "commit", "-m", "Initial"], cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     subprocess.run(
@@ -56,7 +67,9 @@ def main() -> int:
         assert_contains(doctor.stdout, "DOCTOR_OK")
         strict_doctor = run_cmd("doctor", "--strict", repo=repo)
         assert_contains(strict_doctor.stdout, "DOCTOR_OK")
-        version = subprocess.run(["python3", str(COORD), "--version"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        version = subprocess.run(
+            ["python3", str(COORD), "--version"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
+        )
         assert_contains(version.stdout, "0.3.0")
 
         unknown = run_cmd("report", "review", "--change", "chg_9999", "--decision", "pass", repo=repo, check=False)
@@ -229,17 +242,51 @@ def main() -> int:
         ).stdout.strip()
         assert second_change == "chg_0002"
 
-        run_cmd("claim", "--role", "tester", "--actor", "tester-b", "--change", second_change, repo=repo)
-        blocked_claim = run_cmd("claim", "--role", "tester", "--actor", "tester-c", "--change", second_change, repo=repo, check=False)
-        assert blocked_claim.returncode == 2
-        run_cmd("release", "--role", "tester", "--actor", "tester-b", "--change", second_change, repo=repo)
+        expired_claim = run_cmd("claim", "--role", "tester", "--actor", "tester-b", "--change", second_change, "--ttl", "-1", repo=repo)
+        assert json.loads(expired_claim.stdout)["claimed_by"] == "tester-b"
         tester_c_claim = run_cmd("claim", "--role", "tester", "--actor", "tester-c", "--change", second_change, repo=repo)
         assert json.loads(tester_c_claim.stdout)["claimed_by"] == "tester-c"
+        blocked_claim = run_cmd("claim", "--role", "tester", "--actor", "tester-b", "--change", second_change, repo=repo, check=False)
+        assert blocked_claim.returncode == 2
+        run_cmd("release", "--role", "tester", "--actor", "tester-c", "--change", second_change, repo=repo)
+        tester_b_reclaim = run_cmd("claim", "--role", "tester", "--actor", "tester-b", "--change", second_change, repo=repo)
+        assert json.loads(tester_b_reclaim.stdout)["claimed_by"] == "tester-b"
 
         final_doctor = run_cmd("doctor", repo=repo)
         assert_contains(final_doctor.stdout, "DOCTOR_OK")
         final_strict_doctor = run_cmd("doctor", "--strict", repo=repo)
         assert_contains(final_strict_doctor.stdout, "DOCTOR_OK")
+
+    with tempfile.TemporaryDirectory(prefix="coord-strict-test-") as tmp:
+        repo = Path(tmp)
+        setup_repo(repo)
+        run_cmd(
+            "change",
+            "create",
+            "--file",
+            "src/example.py",
+            "--summary",
+            "Create baseline event",
+            "--verify",
+            "pytest tests/test_example.py",
+            repo=repo,
+        )
+        bad_event = {
+            "id": "bad_event_id",
+            "schema": 1,
+            "type": "change.verified",
+            "actor": "main",
+            "ts": "2026-05-21T00:00:00+00:00",
+            "change_id": "chg_9999",
+        }
+        events_path = repo / ".agent-coordination" / "events.jsonl"
+        with events_path.open("a", encoding="utf-8") as events_file:
+            events_file.write(json.dumps(bad_event, sort_keys=True, separators=(",", ":")) + "\n")
+        run_cmd("rebuild", repo=repo)
+        strict_bad = run_cmd("doctor", "--strict", repo=repo, check=False)
+        assert strict_bad.returncode == 1
+        assert_contains(strict_bad.stdout, "invalid event id")
+        assert_contains(strict_bad.stdout, "unknown change_id chg_9999")
 
     print("test_coord.py: all checks passed")
     return 0

@@ -12,6 +12,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
+      - name: Install lint tools
+        run: python3 -m pip install ruff
+      - name: Lint scripts
+        run: ruff check .
+      - name: Check formatting
+        run: ruff format --check .
       - name: Compile scripts
         run: python3 -m py_compile scripts/coord.py scripts/setup_agent_coordination.py scripts/test_coord.py
       - name: Run coordination self-test

@@ -398,7 +398,10 @@ def append_markdown_report(coord: Path, event: dict, role: str) -> None:
     if role == "reviewer":
         entry.append("Findings:")
         findings = event.get("findings") or []
-        entry.extend([f"- {f.get('severity', 'medium')}: {f.get('file', '')}:{f.get('line', '')} - {f.get('message', '')}" for f in findings] or ["- none"])
+        entry.extend(
+            [f"- {f.get('severity', 'medium')}: {f.get('file', '')}:{f.get('line', '')} - {f.get('message', '')}" for f in findings]
+            or ["- none"]
+        )
         entry.extend(["", "Files Read:"])
         entry.extend([f"- {item}" for item in event.get("files_read", [])] or ["- see report event"])
     else:
@@ -1145,19 +1148,27 @@ def cmd_export_html(args) -> int:
     rows = []
     for change in changes:
         change_id = change["id"]
-        task_text = "<br>".join(
-            f"{html_attr(t['role'])}: {html_attr(t['status'])}"
-            + (f" by {html_attr(t['claimed_by'])}" if t.get("claimed_by") else "")
-            for t in tasks_by_change.get(change_id, [])
-        ) or "-"
-        report_text = "<br>".join(
-            f"{html_attr(r['role'])}: {html_attr(r['decision'])} ({html_attr(r['status'])})"
-            for r in reports_by_change.get(change_id, [])
-        ) or "-"
-        finding_text = "<br>".join(
-            f"{html_attr(f['severity'])} {html_attr(f['file'])}:{html_attr(f['line'])} {html_attr(f['message'])} ({html_attr(f['status'])})"
-            for f in findings_by_change.get(change_id, [])
-        ) or "-"
+        task_text = (
+            "<br>".join(
+                f"{html_attr(t['role'])}: {html_attr(t['status'])}" + (f" by {html_attr(t['claimed_by'])}" if t.get("claimed_by") else "")
+                for t in tasks_by_change.get(change_id, [])
+            )
+            or "-"
+        )
+        report_text = (
+            "<br>".join(
+                f"{html_attr(r['role'])}: {html_attr(r['decision'])} ({html_attr(r['status'])})"
+                for r in reports_by_change.get(change_id, [])
+            )
+            or "-"
+        )
+        finding_text = (
+            "<br>".join(
+                f"{html_attr(f['severity'])} {html_attr(f['file'])}:{html_attr(f['line'])} {html_attr(f['message'])} ({html_attr(f['status'])})"
+                for f in findings_by_change.get(change_id, [])
+            )
+            or "-"
+        )
         rows.append(
             "<tr>"
             f"<td>{html_attr(change_id)}</td>"
@@ -1205,12 +1216,12 @@ def cmd_export_html(args) -> int:
   <h2>Changes</h2>
   <table>
     <thead><tr><th>Change</th><th>Status</th><th>Summary</th><th>Tasks</th><th>Reports</th><th>Findings</th></tr></thead>
-    <tbody>{''.join(rows) or '<tr><td colspan="6">No changes</td></tr>'}</tbody>
+    <tbody>{"".join(rows) or '<tr><td colspan="6">No changes</td></tr>'}</tbody>
   </table>
   <h2>Recent Events</h2>
   <table>
     <thead><tr><th>Seq</th><th>Time</th><th>Type</th><th>Actor</th><th>Ref</th></tr></thead>
-    <tbody>{''.join(event_rows) or '<tr><td colspan="5">No events</td></tr>'}</tbody>
+    <tbody>{"".join(event_rows) or '<tr><td colspan="5">No events</td></tr>'}</tbody>
   </table>
 </body>
 </html>

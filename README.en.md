@@ -7,6 +7,8 @@
 
 A Codex skill for coordinating Main Codex, Reviewer Codex, and Tester Codex through a local structured event log. It is designed for workflows where you run multiple Codex conversations/sessions in the same project but do not want to coordinate them through copy/paste, chat state, or manual waiting.
 
+> Status: early experimental release. This skill is moving quickly and is best tested first on low-risk repositories by individuals or small teams. Do not treat it as a mature cloud orchestration platform or a long-running daemon.
+
 ## How This Differs From Built-In Codex Subagents
 
 Codex's built-in subagent system is already a good fit for many parallel tasks: Main Codex can delegate a specific, bounded task to an explorer or worker subagent, wait for the result, and integrate it. This skill does not replace built-in subagents. It covers a different workflow: multiple independent Codex terminals collaborating around the same repository over time, with recoverable, auditable, queryable state.
@@ -326,7 +328,7 @@ The skill includes an end-to-end test script. It uses a temporary directory and 
 python3 ~/.codex/skills/agent-coordination/scripts/test_coord.py
 ```
 
-GitHub Actions runs the same baseline checks: `py_compile` and `scripts/test_coord.py`.
+GitHub Actions runs the same baseline checks: `ruff check`, `ruff format --check`, `py_compile`, and `scripts/test_coord.py`.
 
 ## Limits
 
