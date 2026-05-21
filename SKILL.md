@@ -44,6 +44,8 @@ coord blockers/open/status
 -> coord change create --capture-diff
 -> coord blockers/open/status
 -> commit/push when appropriate
+-> wait-final before final handoff
+-> finish to stop secondary watchers
 -> continue to final delivery without phase-boundary approval stops
 ```
 
@@ -65,8 +67,8 @@ Missing reports mean “pending review,” not approval. They do not stop verifi
 Secondary Codex conversations should claim work before acting:
 
 ```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --claim --interval 60
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --claim --interval 60
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --claim --interval 60 --quiet
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --claim --interval 60 --quiet
 ```
 
 After review/test, publish one report, then mark the task processed:
@@ -80,6 +82,8 @@ Report quality gates:
 - `report review --decision blocking` requires at least one `--finding`.
 - `report test --decision fail` requires at least one `--command` or `--finding`.
 - `report test --decision blocked` requires at least one `--untested`.
+
+Before Main gives the final user response, it must run `coord.py wait-final` so the last published change gets review/test results. Once final checks and any commit/push are complete, Main runs `coord.py finish` immediately before its final response; Reviewer/Tester stop when `watch` prints `SESSION_FINISHED`.
 
 ## Recovery And Inspection
 

@@ -22,6 +22,7 @@ CHANGE_RE = re.compile(r"^chg_\d{4,}$")
 EVENT_RE = re.compile(r"^evt_[0-9a-f]{12}$")
 REPORT_RE = re.compile(r"^rpt_[0-9a-f]{12}$")
 FINDING_RE = re.compile(r"^fnd_[0-9a-f]{12}$")
+TERMINAL_EVENT_TYPES = ("session.finished",)
 
 
 def now_iso() -> str:
@@ -133,6 +134,13 @@ def connect(coord: Path) -> sqlite3.Connection:
 
 def event_path(coord: Path) -> Path:
     return coord / "events.jsonl"
+
+
+def session_finished(coord: Path) -> bool:
+    conn = connect(coord)
+    row = conn.execute("select 1 from events where type = 'session.finished' order by seq desc limit 1").fetchone()
+    conn.close()
+    return bool(row)
 
 
 def append_event(coord: Path, event_type: str, actor: str, payload: dict) -> dict:
@@ -645,7 +653,8 @@ def cmd_next(args) -> int:
         (args.role, last_seq, args.actor, current_time, args.actor),
     ).fetchone()
     if not row:
-        print("NO_CHANGE")
+        if not getattr(args, "quiet", False):
+            print("NO_CHANGE")
         conn.close()
         return 2
     event = json.loads(row["payload"])
@@ -688,6 +697,10 @@ def cmd_mark_processed(args) -> int:
 def cmd_watch(args) -> int:
     deadline = time.time() + args.timeout if args.timeout else None
     while True:
+        if session_finished(coord_dir(Path(args.repo))):
+            print("SESSION_FINISHED")
+            return 0
+        args.quiet = args.quiet or not args.once
         rc = cmd_claim(args) if args.claim else cmd_next(args)
         if rc == 0 or args.once:
             return rc
@@ -729,7 +742,8 @@ def cmd_claim(args) -> int:
         ).fetchone()
         if not row:
             conn.close()
-            print("NO_CLAIMABLE_TASK")
+            if not getattr(args, "quiet", False):
+                print("NO_CLAIMABLE_TASK")
             return 2
         event = json.loads(row["payload"])
         lease_expires_at = add_seconds_iso(args.ttl)
@@ -847,6 +861,77 @@ def cmd_open(args) -> int:
     for row in rows:
         print(f"{row['id']} {row['status']} blockers={row['blockers']} tasks={row['tasks'] or '-'}")
         print(f"  {row['summary']}")
+    return 0
+
+
+def final_state(coord: Path) -> tuple[bool, list[str]]:
+    conn = connect(coord)
+    open_tasks = conn.execute(
+        """
+        select role, change_id, status, coalesce(claimed_by, '') as claimed_by
+        from tasks
+        where status != 'completed'
+        order by change_id, role
+        """
+    ).fetchall()
+    open_findings = conn.execute(
+        """
+        select id, change_id, severity, file, line, message
+        from findings
+        where status = 'open'
+          and (severity in ('high','critical','blocking') or message like '%block%')
+        order by change_id, id
+        """
+    ).fetchall()
+    open_reports = conn.execute(
+        """
+        select id, change_id, role, decision
+        from reports
+        where status = 'open'
+          and decision in ('blocking','fail','blocked')
+        order by change_id, id
+        """
+    ).fetchall()
+    conn.close()
+    details = []
+    for row in open_tasks:
+        owner = f" claimed_by={row['claimed_by']}" if row["claimed_by"] else ""
+        details.append(f"TASK {row['change_id']} {row['role']}:{row['status']}{owner}")
+    for row in open_reports:
+        details.append(f"REPORT {row['id']} {row['change_id']} {row['role']}:{row['decision']}")
+    for row in open_findings:
+        loc = f"{row['file']}:{row['line']}" if row["file"] else "-"
+        details.append(f"FINDING {row['id']} {row['change_id']} {row['severity']} {loc} {row['message']}")
+    return not details, details
+
+
+def cmd_wait_final(args) -> int:
+    coord = coord_dir(Path(args.repo))
+    deadline = time.time() + args.timeout if args.timeout else None
+    while True:
+        ready, details = final_state(coord)
+        if ready:
+            print("FINAL_READY")
+            return 0
+        if args.once or (deadline and time.time() >= deadline):
+            print("FINAL_PENDING")
+            for detail in details:
+                print(f"- {detail}")
+            return 2
+        time.sleep(args.interval)
+
+
+def cmd_finish(args) -> int:
+    coord = coord_dir(Path(args.repo))
+    ready, details = final_state(coord)
+    if not ready and not args.force:
+        print("FINISH_BLOCKED")
+        for detail in details:
+            print(f"- {detail}")
+        return 2
+    with locked(coord):
+        append_event(coord, "session.finished", args.actor, {"reason": args.reason})
+    print("SESSION_FINISHED")
     return 0
 
 
@@ -1030,6 +1115,8 @@ def validate_event_strict(event: dict, lineno: int, state: dict) -> List[str]:
             problems.append(f"events.jsonl:{lineno}: unknown change_id {event.get('change_id')}")
         if event_type == "task.claimed" and "lease_expires_at" not in event:
             problems.append(f"events.jsonl:{lineno}: task.claimed missing lease_expires_at")
+    elif event_type in TERMINAL_EVENT_TYPES:
+        pass
     else:
         problems.append(f"events.jsonl:{lineno}: unknown event type {event_type}")
     return problems
@@ -1059,10 +1146,12 @@ In this repository:
 9. After the user approves the route and says to start, do not stop at roadmap phase boundaries to report progress, ask whether to continue, or wait for confirmation; publish progress as changes/reports and continue to final delivery.
 10. Stop for human input only for newly discovered permissions/credentials/destructive risk missed by preflight, conflicting requirements, environment interruption, or explicit user interrupt.
 11. If the user only asks for status mid-run, briefly report status/open/blockers and continue; do not treat a status question as a pause. Interrupt the unattended workflow only when the user explicitly asks to pause, stop, wait for confirmation, change direction, or not commit.
-12. Before final handoff, run:
+12. After implementation, verification, commit, and push are complete, wait for the final review/test cycle, then signal secondary agents to stop before sending the final user response:
+   {coord_cmd} {repo_arg} wait-final --timeout 1800 --interval 30
    {coord_cmd} {repo_arg} doctor
    {coord_cmd} {repo_arg} blockers
    git status --short
+   {coord_cmd} {repo_arg} finish --actor main
 """
     elif role == "reviewer":
         text = f"""You are Reviewer Codex. Use the agent-coordination skill.
@@ -1071,7 +1160,7 @@ Rules:
 1. Do not edit source files, commit, push, reset, install dependencies, or run broad formatters.
 2. Perform read-only code review only.
 3. Wait for and claim new changes:
-   {coord_cmd} {repo_arg} watch --role reviewer --actor {actor} --claim --interval 60
+   {coord_cmd} {repo_arg} watch --role reviewer --actor {actor} --claim --interval 60 --quiet
 4. When a change appears, read change_id, files, verification, risk, and diff_path from the output.
 5. Review the diff snapshot when present, then touched files and relevant contracts.
 6. Report only real defects, regressions, compatibility risks, missing tests, security issues, or concurrency issues.
@@ -1080,6 +1169,8 @@ Rules:
 8. After reporting, mark processed:
    {coord_cmd} {repo_arg} mark-processed --role reviewer --actor {actor} --change <change_id>
 9. Do not ask the user to relay results or confirm continuation; write the report to coord, then watch again.
+10. If watch prints SESSION_FINISHED, stop and do not restart the watch loop.
+11. While waiting, stay silent. Do not send periodic "still waiting" chat messages.
 """
     elif role == "tester":
         text = f"""You are Tester Codex. Use the agent-coordination skill.
@@ -1088,13 +1179,15 @@ Rules:
 1. Do not edit source files, commit, push, reset, install dependencies, or run destructive commands.
 2. Do not fake hardware, vendor SDK, or external-service coverage.
 3. Wait for and claim new changes:
-   {coord_cmd} {repo_arg} watch --role tester --actor {actor} --claim --interval 60
+   {coord_cmd} {repo_arg} watch --role tester --actor {actor} --claim --interval 60 --quiet
 4. When a change appears, run the listed verification command first when safe, then add focused tests based on touched files.
 5. Publish a test report:
    {coord_cmd} {repo_arg} report test --actor {actor} --change <change_id> --decision pass|fail|blocked --command "<command>" --untested "<reason>"
 6. After reporting, mark processed:
    {coord_cmd} {repo_arg} mark-processed --role tester --actor {actor} --change <change_id>
 7. Do not ask the user to relay results or confirm continuation; write the report to coord, then watch again.
+8. If watch prints SESSION_FINISHED, stop and do not restart the watch loop.
+9. While waiting, stay silent. Do not send periodic "still waiting" chat messages.
 """
     elif role == "observer":
         text = f"""You are Observer Codex. Use the agent-coordination skill.
@@ -1313,6 +1406,16 @@ def build_parser() -> argparse.ArgumentParser:
     export_html = sub.add_parser("export-html")
     export_html.add_argument("--output", default="reports/status.html")
     export_html.set_defaults(func=cmd_export_html)
+    wait_final = sub.add_parser("wait-final")
+    wait_final.add_argument("--interval", type=float, default=30.0)
+    wait_final.add_argument("--timeout", type=float, default=1800.0)
+    wait_final.add_argument("--once", action="store_true")
+    wait_final.set_defaults(func=cmd_wait_final)
+    finish = sub.add_parser("finish")
+    finish.add_argument("--actor", default="main")
+    finish.add_argument("--reason", default="final handoff complete")
+    finish.add_argument("--force", action="store_true")
+    finish.set_defaults(func=cmd_finish)
     finding = sub.add_parser("finding")
     finding_sub = finding.add_subparsers(dest="finding_cmd", required=True)
     resolve = finding_sub.add_parser("resolve")
@@ -1348,6 +1451,7 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--timeout", type=float)
     watch.add_argument("--once", action="store_true")
     watch.add_argument("--claim", action="store_true")
+    watch.add_argument("--quiet", action="store_true", help="Suppress idle polling output while waiting.")
     watch.add_argument("--ttl", type=int, default=900)
     watch.add_argument("--change")
     watch.set_defaults(func=cmd_watch)

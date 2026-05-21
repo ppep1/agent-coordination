@@ -214,13 +214,34 @@ def main() -> int:
         assert_contains(reviewer_prompt.stdout, "reviewer-z")
         assert_contains(reviewer_prompt.stdout, "watch --role reviewer")
         assert_contains(reviewer_prompt.stdout, "Do not ask the user to relay results")
+        assert_contains(reviewer_prompt.stdout, "SESSION_FINISHED")
+        assert_contains(reviewer_prompt.stdout, 'Do not send periodic "still waiting" chat messages')
         tester_prompt = run_cmd("prompt", "tester", "--actor", "tester-z", repo=repo)
         assert_contains(tester_prompt.stdout, "tester-z")
         assert_contains(tester_prompt.stdout, "Do not ask the user to relay results")
+        assert_contains(tester_prompt.stdout, "SESSION_FINISHED")
+        assert_contains(tester_prompt.stdout, 'Do not send periodic "still waiting" chat messages')
         observer_prompt = run_cmd("prompt", "observer", "--actor", "observer-z", repo=repo)
         assert_contains(observer_prompt.stdout, "Observer Codex")
         assert_contains(observer_prompt.stdout, "lightweight model")
         assert_contains(observer_prompt.stdout, "Do not edit source files, claim tasks")
+
+        quiet_watch = run_cmd(
+            "watch",
+            "--role",
+            "reviewer",
+            "--actor",
+            "reviewer-a",
+            "--claim",
+            "--interval",
+            "0.01",
+            "--timeout",
+            "0.01",
+            repo=repo,
+            check=False,
+        )
+        assert quiet_watch.returncode == 2
+        assert quiet_watch.stdout == "WATCH_TIMEOUT\n"
 
         html_report = run_cmd("export-html", repo=repo).stdout.strip()
         html_path = Path(html_report)
@@ -251,6 +272,35 @@ def main() -> int:
         run_cmd("release", "--role", "tester", "--actor", "tester-c", "--change", second_change, repo=repo)
         tester_b_reclaim = run_cmd("claim", "--role", "tester", "--actor", "tester-b", "--change", second_change, repo=repo)
         assert json.loads(tester_b_reclaim.stdout)["claimed_by"] == "tester-b"
+
+        pending_final = run_cmd("wait-final", "--once", repo=repo, check=False)
+        assert pending_final.returncode == 2
+        assert_contains(pending_final.stdout, "FINAL_PENDING")
+        assert_contains(pending_final.stdout, f"TASK {second_change} reviewer:pending")
+
+        run_cmd("claim", "--role", "reviewer", "--actor", "reviewer-a", "--change", second_change, repo=repo)
+        run_cmd("report", "review", "--actor", "reviewer-a", "--change", second_change, "--decision", "pass", repo=repo)
+        run_cmd("mark-processed", "--role", "reviewer", "--actor", "reviewer-a", "--change", second_change, repo=repo)
+        run_cmd(
+            "report",
+            "test",
+            "--actor",
+            "tester-b",
+            "--change",
+            second_change,
+            "--decision",
+            "pass",
+            "--command",
+            "python -m compileall src",
+            repo=repo,
+        )
+        run_cmd("mark-processed", "--role", "tester", "--actor", "tester-b", "--change", second_change, repo=repo)
+        ready_final = run_cmd("wait-final", "--once", repo=repo)
+        assert_contains(ready_final.stdout, "FINAL_READY")
+        finish = run_cmd("finish", "--actor", "main", repo=repo)
+        assert_contains(finish.stdout, "SESSION_FINISHED")
+        finished_watch = run_cmd("watch", "--role", "reviewer", "--actor", "reviewer-a", "--claim", "--once", repo=repo)
+        assert_contains(finished_watch.stdout, "SESSION_FINISHED")
 
         final_doctor = run_cmd("doctor", repo=repo)
         assert_contains(final_doctor.stdout, "DOCTOR_OK")

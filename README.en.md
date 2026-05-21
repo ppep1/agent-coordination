@@ -163,6 +163,7 @@ Main's key rules:
 - Do not wait for fresh reviewer/tester reports before continuing verified low/medium-risk increments.
 - Once a valid `blocking`, `fail`, or `blocked` appears, handle it before unrelated work.
 - If the user only asks for status, briefly report `status/open/blockers` and continue. Interrupt the unattended workflow only when the user explicitly asks to pause, stop, wait for confirmation, change direction, or not commit.
+- Before the final response, run `wait-final` to wait for the last Reviewer/Tester cycle. After implementation, verification, commit, and push are complete, run `finish` so secondary Codex conversations exit their wait loops, then send the final response.
 
 ### Conversation 2: Reviewer Codex
 
@@ -176,7 +177,7 @@ How to use it:
 ```text
 Start as Reviewer Codex. First confirm the current directory is the target repo, then run:
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt reviewer --actor reviewer-a
-Read the full role prompt printed by that command and follow it strictly. After startup, do not wait for another task from me; enter the watch/claim/review/report/mark-processed loop.
+Read the full role prompt printed by that command and follow it strictly. After startup, do not wait for another task from me; enter the silent watch/claim/review/report/mark-processed loop. Do not send "still waiting" chat messages when there is no new change. If watch prints SESSION_FINISHED, stop.
 ```
 
 3. Do not give Reviewer a separate task. It will automatically claim, review, report, and mark processed after Main publishes a change.
@@ -199,7 +200,7 @@ How to use it:
 ```text
 Start as Tester Codex. First confirm the current directory is the target repo, then run:
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt tester --actor tester-a
-Read the full role prompt printed by that command and follow it strictly. After startup, do not wait for another task from me; enter the watch/claim/test/report/mark-processed loop.
+Read the full role prompt printed by that command and follow it strictly. After startup, do not wait for another task from me; enter the silent watch/claim/test/report/mark-processed loop. Do not send "still waiting" chat messages when there is no new change. If watch prints SESSION_FINISHED, stop.
 ```
 
 3. Do not give Tester a separate task. It will automatically claim, verify, report, and mark processed after Main publishes a change.
@@ -262,13 +263,13 @@ Common observation entry points:
 
 ```text
 Main:
-  blockers/open/status -> implement one small increment -> targeted verification -> change create -> blockers/open/status -> continue
+  blockers/open/status -> implement one small increment -> targeted verification -> change create -> blockers/open/status -> commit/push -> final wait-final -> finish -> final response
 
 Reviewer:
-  watch -> review -> report review -> mark-processed -> watch
+  quiet watch -> review -> report review -> mark-processed -> quiet watch -> exit after SESSION_FINISHED
 
 Tester:
-  watch -> run tests -> report test -> mark-processed -> watch
+  quiet watch -> run tests -> report test -> mark-processed -> quiet watch -> exit after SESSION_FINISHED
 ```
 
 Main does not need to wait for fresh review/test reports after every change. However, once `blockers` reports a valid issue, Main should handle it before unrelated work.
@@ -292,16 +293,19 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . next --role
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . show chg_0001
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . timeline chg_0001
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . export-html
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . wait-final --once
 
 # Task claim / lease
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . claim --role reviewer --actor reviewer-a --ttl 900
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . release --role reviewer --actor reviewer-a --change chg_0001
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --claim --interval 60 --quiet
 
 # Change lifecycle
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create --capture-diff --file src/a.py --summary "..." --verify "pytest ..."
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change verify chg_0001
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change commit chg_0001
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change push chg_0001
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . finish --actor main
 
 # Reports
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review --change chg_0001 --decision pass
