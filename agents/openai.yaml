@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Coordination"
+  short_description: "Coordinate Main Codex with async reviewer/tester watchers."
+  default_prompt: "Use a local structured event log and status index so Main Codex keeps implementing verified increments while reviewer/tester watchers asynchronously review, test, report blockers, and mark handled findings."
