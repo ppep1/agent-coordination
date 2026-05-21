@@ -55,7 +55,7 @@ The setup script adds `.agent-coordination/` to `.gitignore` by default. Coordin
 
 After each meaningful implementation step:
 
-1. Run `coord.py blockers` and `coord.py status`; fix valid blockers first.
+1. Run `coord.py blockers`, `coord.py open`, and `coord.py status`; fix valid blockers first.
 2. Implement one small, coherent increment.
 3. Run targeted verification.
 4. Publish a structured change event with `coord.py change create`; this also appends `.agent-coordination/changes.md`.
@@ -97,6 +97,14 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . rebuild
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
 ```
 
+Inspect active work and history:
+
+```bash
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . show chg_0003
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . timeline chg_0003
+```
+
 Compatibility Markdown entries must still be appended at EOF. Do not insert entries by patching against repeated text such as `Open Questions: - none`; older watchers determine the newest change from the last `## Change ...` heading in the file.
 
 ## Reviewer/Tester Loop
@@ -104,7 +112,7 @@ Compatibility Markdown entries must still be appended at EOF. Do not insert entr
 Secondary Codex terminals should run a wait command, then act only when a structured change appears:
 
 ```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --interval 60
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --claim --interval 60
 ```
 
 When the watcher reports a new change:
@@ -112,7 +120,7 @@ When the watcher reports a new change:
 1. Read the reported change id, files, verification, and risk from `coord.py watch`; read `.agent-coordination/changes.md` only if useful.
 2. Perform the assigned review/test.
 3. Publish results with `coord.py report review` or `coord.py report test`; this also appends Markdown reports.
-4. Mark that change as processed:
+4. Mark that change as processed; this completes the claimed task:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed --role reviewer --actor reviewer-a --change chg_0003
@@ -126,7 +134,7 @@ If no change is detected, stay silent.
 
 Tester Codex is responsible for useful validation, not just echoing the change entry.
 
-1. Watch structured `change.created` events with `coord.py watch`.
+1. Watch and claim structured `change.created` events with `coord.py watch --claim`.
 2. When a new change appears, read that exact change entry before testing.
 3. Run the verification commands listed in the change when they are safe.
 4. Add scoped tests based on the files touched. For code, tests, build, or runtime entrypoint changes, prefer focused tests plus full-suite validation when feasible.
@@ -137,8 +145,15 @@ Tester Codex is responsible for useful validation, not just echoing the change e
 Use role `tester` for watcher commands:
 
 ```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --interval 60
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --claim --interval 60
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed --role tester --actor tester-a --change chg_0003
+```
+
+Use explicit claim/release when a watcher needs manual control:
+
+```bash
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . claim --role reviewer --actor reviewer-a --ttl 900
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . release --role reviewer --actor reviewer-a --change chg_0003
 ```
 
 The legacy `watch_changes.py` commands remain available for Markdown-only workflows. Prefer `coord.py` for new workflows because it uses structured events, file locking, and a queryable status index.
@@ -164,8 +179,8 @@ Reviewer validation guidelines:
 When the user wants active progress instead of manual checkpoints, Main Codex should use this loop:
 
 ```text
-coord blockers/status -> fix valid blockers -> implement one small increment
--> run targeted verification -> coord change create -> coord blockers/status
+coord blockers/open/status -> fix valid blockers -> implement one small increment
+-> run targeted verification -> coord change create -> coord blockers/open/status
 -> commit locally if verified and no known blocker -> push when network/policy allows
 -> continue next increment without waiting for fresh reports
 ```
@@ -233,3 +248,9 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report reso
 - Main Codex must still inspect `git status --short` before final response.
 
 See `references/protocol.md` for detailed templates and recovery rules.
+
+For a local end-to-end smoke test of the coordination CLI, run:
+
+```bash
+python3 ~/.codex/skills/agent-coordination/scripts/test_coord.py
+```

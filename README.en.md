@@ -34,7 +34,7 @@ This skill changes the workflow to:
 Main Codex: implement + verify + publish change
 Reviewer Codex: watch -> read-only review -> report -> mark-processed -> watch
 Tester Codex: watch -> run tests -> report -> mark-processed -> watch
-Main Codex: status/blockers -> fix blockers -> continue
+Main Codex: status/open/blockers -> fix blockers -> continue
 ```
 
 ## Runtime State Model
@@ -104,6 +104,7 @@ Check current state:
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
 ```
 
 Initially there should usually be no changes and no blockers.
@@ -169,13 +170,13 @@ You are Reviewer Codex. Use the agent-coordination skill.
 Rules:
 1. Do not edit source files, commit, push, reset, install dependencies, or run broad formatters.
 2. Perform read-only code review only.
-3. Wait for new changes:
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --interval 60
+3. Wait for and claim new changes:
+   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --claim --interval 60
 4. When a change appears, read change_id, files, verification, and risk from the output.
 5. Review touched files and relevant contracts. Report only real defects, regressions, compatibility risks, missing tests, security issues, or concurrency issues.
 6. Publish a report:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review --actor reviewer-a --change <change_id> --decision pass|concerns|blocking --files-read <file> --finding "severity:file:line:message"
-7. After reporting, mark processed:
+7. After reporting, mark processed; this completes the claimed task:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed --role reviewer --actor reviewer-a --change <change_id>
 8. Then watch again.
 ```
@@ -183,7 +184,7 @@ Rules:
 Start watching:
 
 ```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --interval 60
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --claim --interval 60
 ```
 
 When Main publishes a change, Reviewer sees:
@@ -257,12 +258,12 @@ You are Tester Codex. Use the agent-coordination skill.
 Rules:
 1. Do not edit source files, commit, push, reset, install dependencies, or run destructive commands.
 2. Do not fake hardware, vendor SDK, or external-service coverage.
-3. Wait for new changes:
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --interval 60
+3. Wait for and claim new changes:
+   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --claim --interval 60
 4. When a change appears, run the listed verification command first when safe, then add focused tests based on touched files.
 5. Publish a test report:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test --actor tester-a --change <change_id> --decision pass|fail|blocked --command "<command>" --untested "<reason>"
-6. After reporting, mark processed:
+6. After reporting, mark processed; this completes the claimed task:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed --role tester --actor tester-a --change <change_id>
 7. Then watch again.
 ```
@@ -270,7 +271,7 @@ Rules:
 Start watching:
 
 ```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --interval 60
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --claim --interval 60
 ```
 
 If tests pass:
@@ -317,6 +318,7 @@ Main can check state at any time:
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
 ```
 
 If blockers show:
@@ -362,7 +364,7 @@ No open blockers.
 
 ```text
 Main:
-  blockers/status -> implement one small increment -> targeted verification -> change create -> blockers/status -> continue
+  blockers/open/status -> implement one small increment -> targeted verification -> change create -> blockers/open/status -> continue
 
 Reviewer:
   watch -> review -> report review -> mark-processed -> watch
@@ -384,7 +386,14 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
 # Query
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . next --role tester --actor tester-a
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . show chg_0001
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . timeline chg_0001
+
+# Task claim / lease
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . claim --role reviewer --actor reviewer-a --ttl 900
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . release --role reviewer --actor reviewer-a --change chg_0001
 
 # Change lifecycle
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create --file src/a.py --summary "..." --verify "pytest ..."
@@ -399,6 +408,14 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test
 # Resolve handled issues
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . finding resolve fnd_abc123 --reason "Fixed in chg_0002"
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report resolve rpt_abc123 --reason "Fixed and verified in chg_0002"
+```
+
+## Run Self-Test
+
+The skill includes an end-to-end test script. It uses a temporary directory and validates init, change creation, claim/lease, reports, mark-processed, show/open/timeline, resolve, and rebuild:
+
+```bash
+python3 ~/.codex/skills/agent-coordination/scripts/test_coord.py
 ```
 
 ## Compatibility

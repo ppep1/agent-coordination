@@ -34,7 +34,7 @@
 Main Codex: 持续实现 + 验证 + 发布 change
 Reviewer Codex: watch -> 只读审查 -> report -> mark-processed -> watch
 Tester Codex: watch -> 运行测试 -> report -> mark-processed -> watch
-Main Codex: status/blockers -> 修 blocker -> 继续
+Main Codex: status/open/blockers -> 修 blocker -> 继续
 ```
 
 ## 文件和状态模型
@@ -104,6 +104,7 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
 ```
 
 第一次通常会看到没有 change、没有 blocker。
@@ -169,13 +170,13 @@ Reviewer Codex 默认只读代码，不改源码。
 规则：
 1. 不改源码，不 commit，不 push，不 reset，不安装依赖，不跑 broad formatter。
 2. 只做只读代码审查。
-3. 等待新 change：
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --interval 60
+3. 等待并领取新 change：
+   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --claim --interval 60
 4. 发现新 change 后，读取输出中的 change_id、files、verification、risk。
 5. 审查 touched files 和相关契约，只报告真实缺陷、回归、兼容性风险、缺失测试、安全/并发问题。
 6. 发布报告：
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review --actor reviewer-a --change <change_id> --decision pass|concerns|blocking --files-read <file> --finding "severity:file:line:message"
-7. 报告后标记 processed：
+7. 报告后标记 processed，这会完成已领取的 task：
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed --role reviewer --actor reviewer-a --change <change_id>
 8. 然后继续 watch。
 ```
@@ -183,7 +184,7 @@ Reviewer Codex 默认只读代码，不改源码。
 Reviewer 开始等待：
 
 ```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --interval 60
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --claim --interval 60
 ```
 
 如果 Main 发布了 change，Reviewer 会看到类似：
@@ -257,12 +258,12 @@ Tester Codex 负责真实运行验证，不假装覆盖。
 规则：
 1. 不改源码，不 commit，不 push，不 reset，不安装依赖，不跑破坏性命令。
 2. 不假装硬件、vendor SDK、外部服务覆盖。
-3. 等待新 change：
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --interval 60
+3. 等待并领取新 change：
+   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --claim --interval 60
 4. 发现新 change 后，优先运行 change 里列出的 verification command；再根据 touched files 补充 focused tests。
 5. 发布测试报告：
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test --actor tester-a --change <change_id> --decision pass|fail|blocked --command "<command>" --untested "<reason>"
-6. 报告后标记 processed：
+6. 报告后标记 processed，这会完成已领取的 task：
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed --role tester --actor tester-a --change <change_id>
 7. 然后继续 watch。
 ```
@@ -270,7 +271,7 @@ Tester Codex 负责真实运行验证，不假装覆盖。
 Tester 开始等待：
 
 ```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --interval 60
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --claim --interval 60
 ```
 
 测试通过：
@@ -317,6 +318,7 @@ Main 随时可以查状态：
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
 ```
 
 如果看到：
@@ -362,7 +364,7 @@ No open blockers.
 
 ```text
 Main:
-  blockers/status -> 实现一个小增量 -> targeted verification -> change create -> blockers/status -> 继续
+  blockers/open/status -> 实现一个小增量 -> targeted verification -> change create -> blockers/open/status -> 继续
 
 Reviewer:
   watch -> review -> report review -> mark-processed -> watch
@@ -384,7 +386,14 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
 # 查询
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . next --role tester --actor tester-a
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . show chg_0001
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . timeline chg_0001
+
+# 任务 claim / lease
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . claim --role reviewer --actor reviewer-a --ttl 900
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . release --role reviewer --actor reviewer-a --change chg_0001
 
 # change 生命周期
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create --file src/a.py --summary "..." --verify "pytest ..."
@@ -399,6 +408,14 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test
 # 关闭已处理问题
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . finding resolve fnd_abc123 --reason "Fixed in chg_0002"
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report resolve rpt_abc123 --reason "Fixed and verified in chg_0002"
+```
+
+## 运行自测
+
+skill 自带一个端到端测试脚本，会在临时目录里验证初始化、change、claim/lease、report、mark-processed、show/open/timeline、resolve 和 rebuild：
+
+```bash
+python3 ~/.codex/skills/agent-coordination/scripts/test_coord.py
 ```
 
 ## 兼容说明

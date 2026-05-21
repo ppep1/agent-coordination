@@ -6,8 +6,9 @@ import sqlite3
 import time
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import List, Optional
 
 
 SCHEMA = 1
@@ -17,6 +18,10 @@ BLOCKING_SEVERITIES = ("high", "critical", "blocking")
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def add_seconds_iso(seconds: int) -> str:
+    return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
 
 
 def coord_dir(repo: Path) -> Path:
@@ -98,6 +103,16 @@ def connect(coord: Path) -> sqlite3.Connection:
           last_seq integer not null,
           updated_at text not null
         );
+        create table if not exists tasks (
+          role text not null,
+          change_id text not null,
+          status text not null,
+          claimed_by text,
+          lease_expires_at text,
+          completed_by text,
+          updated_at text not null,
+          primary key (role, change_id)
+        );
         """
     )
     report_columns = {row["name"] for row in conn.execute("pragma table_info(reports)").fetchall()}
@@ -158,6 +173,14 @@ def index_event(coord: Path, event: dict) -> None:
                 "insert or ignore into change_files(change_id, path) values(?, ?)",
                 (event["change_id"], path),
             )
+        for role in event.get("task_roles", ["reviewer", "tester"]):
+            conn.execute(
+                """
+                insert or ignore into tasks(role, change_id, status, updated_at)
+                values(?, ?, 'pending', ?)
+                """,
+                (role, event["change_id"], event["ts"]),
+            )
     elif event["type"] == "change.verified":
         conn.execute(
             "update changes set status = 'verified', verified_at = ? where id = ?",
@@ -203,6 +226,42 @@ def index_event(coord: Path, event: dict) -> None:
         conn.execute("update findings set status = 'resolved' where id = ?", (event["finding_id"],))
     elif event["type"] == "report.resolved":
         conn.execute("update reports set status = 'resolved' where id = ?", (event["report_id"],))
+    elif event["type"] == "task.claimed":
+        conn.execute(
+            """
+            insert into tasks(role, change_id, status, claimed_by, lease_expires_at, updated_at)
+            values(?, ?, 'claimed', ?, ?, ?)
+            on conflict(role, change_id) do update set
+              status = 'claimed',
+              claimed_by = excluded.claimed_by,
+              lease_expires_at = excluded.lease_expires_at,
+              updated_at = excluded.updated_at
+            """,
+            (event["role"], event["change_id"], event["actor"], event["lease_expires_at"], event["ts"]),
+        )
+    elif event["type"] == "task.released":
+        conn.execute(
+            """
+            update tasks
+            set status = 'pending', claimed_by = null, lease_expires_at = null, updated_at = ?
+            where role = ? and change_id = ? and status != 'completed'
+            """,
+            (event["ts"], event["role"], event["change_id"]),
+        )
+    elif event["type"] == "task.completed":
+        conn.execute(
+            """
+            insert into tasks(role, change_id, status, claimed_by, lease_expires_at, completed_by, updated_at)
+            values(?, ?, 'completed', null, null, ?, ?)
+            on conflict(role, change_id) do update set
+              status = 'completed',
+              claimed_by = null,
+              lease_expires_at = null,
+              completed_by = excluded.completed_by,
+              updated_at = excluded.updated_at
+            """,
+            (event["role"], event["change_id"], event["actor"], event["ts"]),
+        )
 
     conn.commit()
     conn.close()
@@ -238,6 +297,41 @@ def change_exists(coord: Path, change_id: str) -> bool:
     row = conn.execute("select 1 from changes where id = ?", (change_id,)).fetchone()
     conn.close()
     return row is not None
+
+
+def report_exists(coord: Path, report_id: str) -> bool:
+    conn = connect(coord)
+    row = conn.execute("select 1 from reports where id = ?", (report_id,)).fetchone()
+    conn.close()
+    return row is not None
+
+
+def load_change_event(conn: sqlite3.Connection, change_id: str) -> Optional[dict]:
+    row = conn.execute(
+        """
+        select payload
+        from events
+        where type = 'change.created'
+          and json_extract(payload, '$.change_id') = ?
+        order by seq desc
+        limit 1
+        """,
+        (change_id,),
+    ).fetchone()
+    return json.loads(row["payload"]) if row else None
+
+
+def format_change_payload(event: dict, seq: Optional[int] = None) -> dict:
+    payload = {
+        "change_id": event["change_id"],
+        "summary": event.get("summary", ""),
+        "files": event.get("files", []),
+        "verification": event.get("verification", []),
+        "risk": event.get("risk", ""),
+    }
+    if seq is not None:
+        payload = {"seq": seq, **payload}
+    return payload
 
 
 def markdown_change_id(change_id: str) -> str:
@@ -311,7 +405,7 @@ def parse_finding(text: str) -> dict:
     return {"severity": "medium", "message": text}
 
 
-def with_finding_ids(findings: list[dict]) -> list[dict]:
+def with_finding_ids(findings: List[dict]) -> List[dict]:
     return [{**finding, "id": finding.get("id") or f"fnd_{uuid.uuid4().hex[:12]}"} for finding in findings]
 
 
@@ -384,6 +478,15 @@ def cmd_report(args, role: str) -> int:
         if not change_exists(coord, args.change):
             print(f"UNKNOWN_CHANGE {args.change}")
             return 2
+        conn = connect(coord)
+        task = conn.execute(
+            "select status, claimed_by, lease_expires_at from tasks where role = ? and change_id = ?",
+            (role, args.change),
+        ).fetchone()
+        conn.close()
+        if task and task["status"] == "claimed" and task["claimed_by"] != args.actor and task["lease_expires_at"] > now_iso():
+            print(f"TASK_CLAIMED_BY {task['claimed_by']}")
+            return 2
         event = append_event(coord, event_type, args.actor, payload)
         append_markdown_report(coord, event, role)
     print(payload["report_id"])
@@ -397,6 +500,7 @@ def cmd_status(args) -> int:
         """
         select c.id, c.status, c.summary,
                coalesce(group_concat(distinct r.role || ':' || r.decision), '') as reports,
+               coalesce(group_concat(distinct t.role || ':' || t.status), '') as tasks,
                (
                  (select count(*) from findings f where f.change_id = c.id and f.status = 'open'
                  and (f.severity in ('high','critical','blocking') or f.message like '%block%'))
@@ -407,6 +511,7 @@ def cmd_status(args) -> int:
                ) as blockers
         from changes c
         left join reports r on r.change_id = c.id
+        left join tasks t on t.change_id = c.id
         group by c.id
         order by c.created_at desc
         limit ?
@@ -418,7 +523,7 @@ def cmd_status(args) -> int:
         conn.close()
         return 0
     for row in rows:
-        print(f"{row['id']} {row['status']} blockers={row['blockers']} reports={row['reports'] or '-'}")
+        print(f"{row['id']} {row['status']} blockers={row['blockers']} tasks={row['tasks'] or '-'} reports={row['reports'] or '-'}")
         print(f"  {row['summary']}")
     conn.close()
     return 0
@@ -463,11 +568,20 @@ def cmd_next(args) -> int:
     conn = connect(coord)
     offset = conn.execute("select last_seq from agent_offsets where actor = ?", (args.actor,)).fetchone()
     last_seq = int(offset["last_seq"]) if offset else 0
+    current_time = now_iso()
     row = conn.execute(
         """
         select e.seq, e.payload
         from events e
+        join tasks t
+          on t.change_id = json_extract(e.payload, '$.change_id')
+         and t.role = ?
         where e.seq > ? and e.type = 'change.created'
+          and (
+            t.status = 'pending'
+            or (t.status = 'claimed' and t.claimed_by = ?)
+            or (t.status = 'claimed' and t.lease_expires_at <= ?)
+          )
           and not exists (
             select 1 from reports r
             where r.change_id = json_extract(e.payload, '$.change_id') and r.actor = ?
@@ -475,42 +589,45 @@ def cmd_next(args) -> int:
         order by e.seq
         limit 1
         """,
-        (last_seq, args.actor),
+        (args.role, last_seq, args.actor, current_time, args.actor),
     ).fetchone()
     if not row:
         print("NO_CHANGE")
         conn.close()
         return 2
     event = json.loads(row["payload"])
-    print(json.dumps({
-        "seq": row["seq"],
-        "change_id": event["change_id"],
-        "summary": event.get("summary", ""),
-        "files": event.get("files", []),
-        "verification": event.get("verification", []),
-        "risk": event.get("risk", ""),
-    }, indent=2))
+    print(json.dumps(format_change_payload(event, row["seq"]), indent=2))
     conn.close()
     return 0
 
 
 def cmd_mark_processed(args) -> int:
     coord = coord_dir(Path(args.repo))
-    conn = connect(coord)
-    row = conn.execute(
-        "select max(seq) as seq from events where type = 'change.created' and json_extract(payload, '$.change_id') = ?",
-        (args.change,),
-    ).fetchone()
-    if not row or row["seq"] is None:
-        print("UNKNOWN_CHANGE")
+    with locked(coord):
+        conn = connect(coord)
+        row = conn.execute(
+            "select max(seq) as seq from events where type = 'change.created' and json_extract(payload, '$.change_id') = ?",
+            (args.change,),
+        ).fetchone()
+        if not row or row["seq"] is None:
+            print("UNKNOWN_CHANGE")
+            conn.close()
+            return 2
+        task = conn.execute(
+            "select status, claimed_by, lease_expires_at from tasks where role = ? and change_id = ?",
+            (args.role, args.change),
+        ).fetchone()
+        if task and task["status"] == "claimed" and task["claimed_by"] != args.actor and task["lease_expires_at"] > now_iso():
+            print(f"TASK_CLAIMED_BY {task['claimed_by']}")
+            conn.close()
+            return 2
+        conn.execute(
+            "insert or replace into agent_offsets(actor, role, last_seq, updated_at) values(?, ?, ?, ?)",
+            (args.actor, args.role, int(row["seq"]), now_iso()),
+        )
+        conn.commit()
         conn.close()
-        return 2
-    conn.execute(
-        "insert or replace into agent_offsets(actor, role, last_seq, updated_at) values(?, ?, ?, ?)",
-        (args.actor, args.role, int(row["seq"]), now_iso()),
-    )
-    conn.commit()
-    conn.close()
+        append_event(coord, "task.completed", args.actor, {"role": args.role, "change_id": args.change})
     print(f"MARKED_PROCESSED {args.actor} {args.change}")
     return 0
 
@@ -518,13 +635,196 @@ def cmd_mark_processed(args) -> int:
 def cmd_watch(args) -> int:
     deadline = time.time() + args.timeout if args.timeout else None
     while True:
-        rc = cmd_next(args)
+        rc = cmd_claim(args) if args.claim else cmd_next(args)
         if rc == 0 or args.once:
             return rc
         if deadline and time.time() >= deadline:
             print("WATCH_TIMEOUT")
             return 2
         time.sleep(args.interval)
+
+
+def cmd_claim(args) -> int:
+    coord = coord_dir(Path(args.repo))
+    with locked(coord):
+        conn = connect(coord)
+        current_time = now_iso()
+        params = [args.role, args.actor, current_time]
+        change_filter = ""
+        if args.change:
+            change_filter = "and t.change_id = ?"
+            params.append(args.change)
+        row = conn.execute(
+            f"""
+            select t.change_id, e.seq, e.payload
+            from tasks t
+            join events e
+              on e.type = 'change.created'
+             and json_extract(e.payload, '$.change_id') = t.change_id
+            where t.role = ?
+              and t.status != 'completed'
+              and (
+                t.status = 'pending'
+                or t.claimed_by = ?
+                or t.lease_expires_at <= ?
+              )
+              {change_filter}
+            order by e.seq
+            limit 1
+            """,
+            params,
+        ).fetchone()
+        if not row:
+            conn.close()
+            print("NO_CLAIMABLE_TASK")
+            return 2
+        event = json.loads(row["payload"])
+        lease_expires_at = add_seconds_iso(args.ttl)
+        change_id = row["change_id"]
+        seq = row["seq"]
+        conn.close()
+        append_event(
+            coord,
+            "task.claimed",
+            args.actor,
+            {
+                "role": args.role,
+                "change_id": change_id,
+                "lease_expires_at": lease_expires_at,
+                "ttl": args.ttl,
+            },
+        )
+    payload = format_change_payload(event, seq)
+    payload.update({"claimed_by": args.actor, "lease_expires_at": lease_expires_at})
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def cmd_release(args) -> int:
+    coord = coord_dir(Path(args.repo))
+    with locked(coord):
+        conn = connect(coord)
+        row = conn.execute(
+            "select status, claimed_by from tasks where role = ? and change_id = ?",
+            (args.role, args.change),
+        ).fetchone()
+        conn.close()
+        if not row:
+            print("UNKNOWN_TASK")
+            return 2
+        if row["status"] != "claimed":
+            print("TASK_NOT_CLAIMED")
+            return 2
+        if row["claimed_by"] != args.actor and not args.force:
+            print(f"CLAIMED_BY {row['claimed_by']}")
+            return 2
+        append_event(coord, "task.released", args.actor, {"role": args.role, "change_id": args.change})
+    print(f"RELEASED {args.role} {args.change}")
+    return 0
+
+
+def cmd_show(args) -> int:
+    coord = coord_dir(Path(args.repo))
+    conn = connect(coord)
+    change = conn.execute("select * from changes where id = ?", (args.change,)).fetchone()
+    if not change:
+        conn.close()
+        print(f"UNKNOWN_CHANGE {args.change}")
+        return 2
+    files = [row["path"] for row in conn.execute("select path from change_files where change_id = ? order by path", (args.change,))]
+    tasks = [dict(row) for row in conn.execute("select * from tasks where change_id = ? order by role", (args.change,))]
+    reports = [dict(row) for row in conn.execute("select * from reports where change_id = ? order by created_at", (args.change,))]
+    findings = [dict(row) for row in conn.execute("select * from findings where change_id = ? order by id", (args.change,))]
+    event = load_change_event(conn, args.change) or {}
+    conn.close()
+    output = {
+        "change": dict(change),
+        "files": files,
+        "verification": event.get("verification", []),
+        "tasks": tasks,
+        "reports": reports,
+        "findings": findings,
+    }
+    print(json.dumps(output, indent=2))
+    return 0
+
+
+def cmd_open(args) -> int:
+    coord = coord_dir(Path(args.repo))
+    conn = connect(coord)
+    rows = conn.execute(
+        """
+        select c.id, c.status, c.summary,
+               coalesce(group_concat(distinct t.role || ':' || t.status), '') as tasks,
+               (
+                 (select count(*) from findings f where f.change_id = c.id and f.status = 'open'
+                  and (f.severity in ('high','critical','blocking') or f.message like '%block%'))
+                 +
+                 (select count(*) from reports r where r.change_id = c.id
+                  and r.status = 'open'
+                  and r.decision in ('blocking','fail','blocked'))
+               ) as blockers
+        from changes c
+        left join tasks t on t.change_id = c.id
+        where exists (
+            select 1 from tasks ot
+            where ot.change_id = c.id and ot.status != 'completed'
+          )
+          or exists (
+            select 1 from findings f
+            where f.change_id = c.id and f.status = 'open'
+              and (f.severity in ('high','critical','blocking') or f.message like '%block%')
+          )
+          or exists (
+            select 1 from reports r
+            where r.change_id = c.id and r.status = 'open'
+              and r.decision in ('blocking','fail','blocked')
+          )
+        group by c.id
+        order by c.created_at desc
+        limit ?
+        """,
+        (args.limit,),
+    ).fetchall()
+    conn.close()
+    if not rows:
+        print("No open changes.")
+        return 0
+    for row in rows:
+        print(f"{row['id']} {row['status']} blockers={row['blockers']} tasks={row['tasks'] or '-'}")
+        print(f"  {row['summary']}")
+    return 0
+
+
+def cmd_timeline(args) -> int:
+    coord = coord_dir(Path(args.repo))
+    conn = connect(coord)
+    exists = conn.execute("select 1 from changes where id = ?", (args.change,)).fetchone()
+    if not exists:
+        conn.close()
+        print(f"UNKNOWN_CHANGE {args.change}")
+        return 2
+    rows = conn.execute(
+        """
+        select seq, type, actor, ts, payload
+        from events
+        where json_extract(payload, '$.change_id') = ?
+           or json_extract(payload, '$.finding_id') in (
+                select id from findings where change_id = ?
+              )
+           or json_extract(payload, '$.report_id') in (
+                select id from reports where change_id = ?
+              )
+        order by seq
+        """,
+        (args.change, args.change, args.change),
+    ).fetchall()
+    conn.close()
+    for row in rows:
+        payload = json.loads(row["payload"])
+        detail = payload.get("decision") or payload.get("summary") or payload.get("reason") or payload.get("lease_expires_at") or ""
+        print(f"{row['seq']:04d} {row['ts']} {row['type']} actor={row['actor']} {detail}")
+    return 0
 
 
 def cmd_finding_resolve(args) -> int:
@@ -655,6 +955,15 @@ def build_parser() -> argparse.ArgumentParser:
     status.set_defaults(func=cmd_status)
     blockers = sub.add_parser("blockers")
     blockers.set_defaults(func=cmd_blockers)
+    show = sub.add_parser("show")
+    show.add_argument("change")
+    show.set_defaults(func=cmd_show)
+    open_cmd = sub.add_parser("open")
+    open_cmd.add_argument("--limit", type=int, default=20)
+    open_cmd.set_defaults(func=cmd_open)
+    timeline = sub.add_parser("timeline")
+    timeline.add_argument("change")
+    timeline.set_defaults(func=cmd_timeline)
     finding = sub.add_parser("finding")
     finding_sub = finding.add_subparsers(dest="finding_cmd", required=True)
     resolve = finding_sub.add_parser("resolve")
@@ -666,6 +975,18 @@ def build_parser() -> argparse.ArgumentParser:
     next_cmd.add_argument("--role", required=True)
     next_cmd.add_argument("--actor", required=True)
     next_cmd.set_defaults(func=cmd_next)
+    claim = sub.add_parser("claim")
+    claim.add_argument("--role", required=True)
+    claim.add_argument("--actor", required=True)
+    claim.add_argument("--ttl", type=int, default=900)
+    claim.add_argument("--change")
+    claim.set_defaults(func=cmd_claim)
+    release = sub.add_parser("release")
+    release.add_argument("--role", required=True)
+    release.add_argument("--actor", required=True)
+    release.add_argument("--change", required=True)
+    release.add_argument("--force", action="store_true")
+    release.set_defaults(func=cmd_release)
     mark = sub.add_parser("mark-processed")
     mark.add_argument("--role", required=True)
     mark.add_argument("--actor", required=True)
@@ -677,6 +998,9 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--interval", type=float, default=60.0)
     watch.add_argument("--timeout", type=float)
     watch.add_argument("--once", action="store_true")
+    watch.add_argument("--claim", action="store_true")
+    watch.add_argument("--ttl", type=int, default=900)
+    watch.add_argument("--change")
     watch.set_defaults(func=cmd_watch)
     return parser
 

@@ -85,7 +85,7 @@ def main() -> int:
 
     Rules:
     1. Own implementation, git state, verification, commits/pushes, and final user communication.
-    2. Before a new increment, run `coord.py blockers` and `coord.py status`; fix valid blockers first.
+    2. Before a new increment, run `coord.py blockers`, `coord.py open`, and `coord.py status`; fix valid blockers first.
     3. Keep increments small. After each meaningful implementation step, run targeted verification and publish a structured change with `coord.py change create`.
     4. Treat missing secondary reports as "not reviewed yet", not as approval, but do not idle on verified low/medium-risk increments.
     5. Resolve valid blocking findings from review/test reports before unrelated work or final handoff.
@@ -111,7 +111,7 @@ def main() -> int:
 
     Rules:
     1. Do not edit source files, commit, push, reset, delete files, install dependencies, or run broad formatters.
-    2. Watch structured changes with `coord.py watch`.
+    2. Watch and claim structured changes with `coord.py watch --claim`.
     3. When a new change appears, inspect the touched files and relevant contracts only.
     4. Report concrete bugs, regressions, missing tests, compatibility risks, and unsafe assumptions. Avoid style-only findings unless they hide a real defect.
     5. Publish a review with `coord.py report review`, including `--files-read` for inspected files and `--finding` for material findings.
@@ -122,7 +122,7 @@ def main() -> int:
     Suggested wait command:
 
     ```bash
-    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --interval 60
+    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --claim --interval 60
     ```
     """)
 
@@ -135,7 +135,7 @@ def main() -> int:
     Rules:
     1. Do not edit source files unless explicitly instructed.
     2. Do not commit, push, reset, delete files, install dependencies, run destructive commands, or fake unavailable hardware/vendor coverage.
-    3. Watch structured changes with `coord.py watch`.
+    3. Watch and claim structured changes with `coord.py watch --claim`.
     4. When a new change appears, run the listed verification commands when safe, then add focused checks based on touched files.
     5. Publish results with `coord.py report test`; include each command with `--command`, use `--untested` for anything not actually covered, and add `--finding` for material failures.
     6. Use `pass` only for commands that actually passed, `fail` for real failures, and `blocked` for missing dependencies, unavailable services, or unsafe commands.
@@ -145,7 +145,7 @@ def main() -> int:
     Suggested wait command:
 
     ```bash
-    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --interval 60
+    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --claim --interval 60
     ```
     """)
 

@@ -42,6 +42,9 @@ Inspect state:
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . show chg_0001
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . timeline chg_0001
 ```
 
 Publish a change:
@@ -81,6 +84,14 @@ Mark processed:
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed --role tester --actor tester-a --change chg_0001
 ```
 
+Claim or release work:
+
+```bash
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . claim --role reviewer --actor reviewer-a --ttl 900
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --claim --interval 60
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . release --role reviewer --actor reviewer-a --change chg_0001
+```
+
 Resolve a handled finding:
 
 ```bash
@@ -98,7 +109,7 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report reso
 ```text
 You are Main Codex for this repository.
 Own implementation, git state, verification, commits/pushes, and final user communication.
-Before a new increment, run `coord.py blockers` and `coord.py status`; fix valid blockers first.
+Before a new increment, run `coord.py blockers`, `coord.py open`, and `coord.py status`; fix valid blockers first.
 Keep increments small. After each meaningful change, run targeted verification and publish it with `coord.py change create`.
 After every code-change cycle, run `coord.py blockers` and inspect `coord.py status`, even if no secondary agent has announced completion.
 Resolve valid blocking findings from review/test reports before unrelated work or final handoff.
@@ -112,7 +123,7 @@ Before final response, run `coord.py doctor`, `coord.py blockers`, and `git stat
 ```text
 You are Reviewer Codex for this repository.
 Do not edit source files, commit, push, reset, delete files, install dependencies, or run broad formatters.
-Watch structured changes with `coord.py watch --role reviewer --actor reviewer-a`.
+Watch and claim structured changes with `coord.py watch --role reviewer --actor reviewer-a --claim`.
 When a new change appears, inspect the touched files and relevant contracts only.
 Report concrete bugs, regressions, missing tests, compatibility risks, and unsafe assumptions. Avoid style-only findings unless they hide a real defect.
 Publish findings with `coord.py report review`; include `--files-read` for inspected files and `--finding` for material findings.
@@ -127,7 +138,7 @@ If no update appears, stay silent and keep waiting.
 You are Tester Codex for this repository.
 Do not edit source files unless a task explicitly allows test fixture/report updates.
 Do not commit, push, reset, delete files, install dependencies, run destructive commands, or fake unavailable hardware/vendor coverage.
-Watch structured changes with `coord.py watch --role tester --actor tester-a`.
+Watch and claim structured changes with `coord.py watch --role tester --actor tester-a --claim`.
 When a new change appears, run the listed verification commands when safe, then add focused checks based on touched files.
 Publish results with `coord.py report test`; include each command with `--command`, use `--untested` for anything not actually covered, and add `--finding` for material failures.
 Use `pass` only for commands that actually passed, `fail` for real failures, and `blocked` for missing dependencies, unavailable services, or unsafe commands.
@@ -153,16 +164,19 @@ Important event types:
 - `test.completed`
 - `finding.resolved`
 - `report.resolved`
+- `task.claimed`
+- `task.released`
+- `task.completed`
 
 ## Recovery
 
 If Main Codex is interrupted:
 
-1. Run `coord.py status` and `coord.py blockers`; read Markdown ledgers only if more narrative detail is needed.
+1. Run `coord.py status`, `coord.py open`, and `coord.py blockers`; read Markdown ledgers only if more narrative detail is needed.
 2. Run `git status --short`.
 3. Continue from the latest change id.
 4. Re-run verification for any adopted recommendations.
-5. After the next code-change cycle, run `coord.py blockers` and inspect `coord.py status` again before proceeding.
+5. After the next code-change cycle, run `coord.py blockers`, `coord.py open`, and inspect `coord.py status` again before proceeding.
 
 If `coord.db` is deleted or stale, run `coord.py rebuild`. The index is derived from `events.jsonl`.
 
@@ -172,12 +186,12 @@ If coordination state may be corrupt, run `coord.py doctor` first. It validates 
 
 Use this order during active development:
 
-1. Read `coord.py blockers` and `coord.py status`.
+1. Read `coord.py blockers`, `coord.py open`, and `coord.py status`.
 2. Fix valid blockers or test failures.
 3. If no valid blocker exists, implement one small useful increment.
 4. Run relevant verification.
 5. Publish one change entry with `coord.py change create`.
-6. Read structured status again.
+6. Read structured status again, using `coord.py show <change>` or `coord.py timeline <change>` when detail is needed.
 7. Commit/push verified work if appropriate.
 8. Continue instead of waiting silently.
 
@@ -187,8 +201,8 @@ When appending Markdown manually, write at EOF only. Do not patch against repeat
 
 If a watcher is interrupted:
 
-1. Run `coord.py next --role <role> --actor <actor>`.
-2. Run `coord.py watch` again.
+1. Run `coord.py open`, then `coord.py next --role <role> --actor <actor>` or `coord.py claim --role <role> --actor <actor>`.
+2. Run `coord.py watch --claim` again.
 3. Review the latest unhandled change if needed.
 
 ## Failure Modes Addressed
@@ -197,6 +211,7 @@ If a watcher is interrupted:
 - `events.jsonl` can rebuild `coord.db`.
 - `coord.py doctor` detects malformed event lines, broken SQLite state, and event/index drift before handoff.
 - Unknown changes are rejected for lifecycle and report commands.
+- Reviewer/tester work is represented as tasks. Claims use leases so another watcher can pick up expired work.
 - A detected change is not considered processed until the secondary terminal explicitly marks it processed.
 - Empty `changes.md` baseline does not trigger a fake review cycle in legacy mode.
 - If a reviewer/tester crashes after detection but before report write, the pending change remains recoverable through `coord.py next`.
@@ -204,3 +219,11 @@ If a watcher is interrupted:
 ## Practical Limits
 
 This protocol coordinates multiple Codex terminals, but each secondary terminal must still be started with the role prompt. Once started, it can periodically wait for changes. It is not a system daemon across app restarts unless the user runs it under an external process manager.
+
+## Self-Test
+
+Run the bundled end-to-end test before publishing changes to this skill:
+
+```bash
+python3 ~/.codex/skills/agent-coordination/scripts/test_coord.py
+```
