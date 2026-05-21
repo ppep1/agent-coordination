@@ -125,6 +125,12 @@ Normal code edits, reading project files, running local tests, running non-destr
 
 Main Codex owns implementation, verification, change publication, blocker handling, commits/pushes, and final user delivery.
 
+How to use it:
+
+1. Open the first Codex conversation in the target repository.
+2. Generate the Main prompt, copy the output, and paste it into that conversation.
+3. Send your task to Main and let it perform the preflight review. After you approve the start, Main keeps going.
+
 Main's key rules:
 
 - Perform one preflight review before starting; ask the user first if there are permission, credential, destructive-command, or requirement-conflict risks.
@@ -138,6 +144,12 @@ Main's key rules:
 
 Reviewer Codex is a read-only review role. After receiving its role prompt, it enters a watch loop: claim a change, review it, write a review report, mark processed, and keep watching.
 
+How to use it:
+
+1. Open the second Codex conversation in the same target repository.
+2. Generate the Reviewer prompt, copy the output, and paste it into that conversation.
+3. Do not give Reviewer a separate task. It will enter the watch loop from the prompt, then automatically claim, review, report, and mark processed after Main publishes a change.
+
 Reviewer responsibility boundaries:
 
 - Do not edit source, commit/push/reset, install dependencies, or run broad formatters.
@@ -147,6 +159,12 @@ Reviewer responsibility boundaries:
 ### Conversation 3: Tester Codex
 
 Tester Codex performs real validation. After receiving its role prompt, it enters a watch loop: claim a change, run verification, write a test report, mark processed, and keep watching.
+
+How to use it:
+
+1. Open the third Codex conversation in the same target repository.
+2. Generate the Tester prompt, copy the output, and paste it into that conversation.
+3. Do not give Tester a separate task. It will enter the watch loop from the prompt, then automatically claim, verify, report, and mark processed after Main publishes a change.
 
 Tester responsibility boundaries:
 
@@ -158,6 +176,12 @@ Tester responsibility boundaries:
 ### Optional Conversation 4: Observer Codex
 
 Observer Codex is an optional user-facing status role. Use a lightweight model when available, such as GPT-5.4-Mini. It does not automatically run project tasks; it only reads coordination state and explains it to you.
+
+How to use it:
+
+1. Open the fourth Codex conversation in the same target repository. Use a lightweight model if available.
+2. Generate the Observer prompt, copy the output, and paste it into that conversation.
+3. Ask Observer status questions such as “What has happened?”, “Are there blockers?”, or “What did Reviewer/Tester do?”.
 
 Observer responsibility boundaries:
 
@@ -243,6 +267,8 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt main
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt reviewer --actor reviewer-a
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt tester --actor tester-a
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt observer --actor observer-a
+
+# Copy each prompt into its Main / Reviewer / Tester / Observer Codex conversation
 
 # Resolve handled issues
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . finding resolve fnd_abc123 --reason "Fixed in chg_0002"

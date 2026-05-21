@@ -125,6 +125,12 @@ git pull
 
 Main Codex 负责实现、验证、发布 change、处理 blocker、commit/push 和最终用户交付。
 
+具体做法：
+
+1. 在目标 repo 打开第 1 个 Codex 对话。
+2. 生成 Main prompt，复制输出后粘贴给这个对话。
+3. 把你的任务发给 Main，让它先做 preflight review；你确认开始后，Main 会持续推进。
+
 Main 的关键规则：
 
 - 开始前做一次 preflight review；如果有权限、凭据、破坏性命令或需求冲突风险，先问用户。
@@ -138,6 +144,12 @@ Main 的关键规则：
 
 Reviewer Codex 是只读审查角色。它复制 role prompt 后进入 watch 循环，发现 change 后 claim、审查、写 review report、mark processed，然后继续 watch。
 
+具体做法：
+
+1. 在同一个目标 repo 打开第 2 个 Codex 对话。
+2. 生成 Reviewer prompt，复制输出后粘贴给这个对话。
+3. 不需要再给 Reviewer 具体任务；它会按 prompt 进入 watch 循环，等 Main 发布 change 后自动 claim、审查、写 report、mark processed。
+
 Reviewer 的责任边界：
 
 - 不改源码，不 commit/push/reset，不安装依赖，不跑 broad formatter。
@@ -147,6 +159,12 @@ Reviewer 的责任边界：
 ### 对话 3：Tester Codex
 
 Tester Codex 负责真实验证。它复制 role prompt 后进入 watch 循环，发现 change 后 claim、运行验证、写 test report、mark processed，然后继续 watch。
+
+具体做法：
+
+1. 在同一个目标 repo 打开第 3 个 Codex 对话。
+2. 生成 Tester prompt，复制输出后粘贴给这个对话。
+3. 不需要再给 Tester 具体任务；它会按 prompt 进入 watch 循环，等 Main 发布 change 后自动 claim、运行验证、写 report、mark processed。
 
 Tester 的责任边界：
 
@@ -158,6 +176,12 @@ Tester 的责任边界：
 ### 可选对话 4：Observer Codex
 
 Observer Codex 是可选的用户交流角色，适合用轻量模型，例如 GPT-5.4-Mini。它不自动跑项目任务，只读查询 coordination 状态并解释给你。
+
+具体做法：
+
+1. 在同一个目标 repo 打开第 4 个 Codex 对话，模型可以选轻量模型。
+2. 生成 Observer prompt，复制输出后粘贴给这个对话。
+3. 之后你只向 Observer 问状态，例如“现在做到哪了？”、“有没有 blocker？”、“Reviewer/Tester 做了什么？”。
 
 Observer 的责任边界：
 
@@ -243,6 +267,8 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt main
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt reviewer --actor reviewer-a
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt tester --actor tester-a
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt observer --actor observer-a
+
+# 复制 prompt 后分别粘贴到 Main / Reviewer / Tester / Observer 四个 Codex 对话
 
 # 关闭已处理问题
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . finding resolve fnd_abc123 --reason "Fixed in chg_0002"
