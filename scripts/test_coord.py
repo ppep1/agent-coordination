@@ -54,6 +54,10 @@ def main() -> int:
 
         doctor = run_cmd("doctor", repo=repo)
         assert_contains(doctor.stdout, "DOCTOR_OK")
+        strict_doctor = run_cmd("doctor", "--strict", repo=repo)
+        assert_contains(strict_doctor.stdout, "DOCTOR_OK")
+        version = subprocess.run(["python3", str(COORD), "--version"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        assert_contains(version.stdout, "0.3.0")
 
         unknown = run_cmd("report", "review", "--change", "chg_9999", "--decision", "pass", repo=repo, check=False)
         assert unknown.returncode == 2
@@ -220,6 +224,8 @@ def main() -> int:
 
         final_doctor = run_cmd("doctor", repo=repo)
         assert_contains(final_doctor.stdout, "DOCTOR_OK")
+        final_strict_doctor = run_cmd("doctor", "--strict", repo=repo)
+        assert_contains(final_strict_doctor.stdout, "DOCTOR_OK")
 
     print("test_coord.py: all checks passed")
     return 0

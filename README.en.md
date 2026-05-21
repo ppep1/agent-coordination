@@ -97,6 +97,7 @@ Initialize coordination:
 python3 ~/.codex/skills/agent-coordination/scripts/setup_agent_coordination.py --repo .
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . init
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor --strict
 ```
 
 Check current state:
@@ -402,9 +403,11 @@ Main does not need to wait for fresh review/test reports after every change. How
 
 ```bash
 # Initialize / repair
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --version
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . init
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . rebuild
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor --strict
 
 # Query
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
@@ -445,6 +448,8 @@ The skill includes an end-to-end test script. It uses a temporary directory and 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/test_coord.py
 ```
+
+GitHub Actions runs the same baseline checks: `py_compile` and `scripts/test_coord.py`.
 
 ## Compatibility
 

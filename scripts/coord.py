@@ -3,6 +3,7 @@ import argparse
 import fcntl
 import html
 import json
+import re
 import sqlite3
 import subprocess
 import time
@@ -13,9 +14,14 @@ from pathlib import Path
 from typing import List, Optional
 
 
+VERSION = "0.3.0"
 SCHEMA = 1
 BLOCKING_DECISIONS = ("blocking", "fail", "blocked")
 BLOCKING_SEVERITIES = ("high", "critical", "blocking")
+CHANGE_RE = re.compile(r"^chg_\d{4,}$")
+EVENT_RE = re.compile(r"^evt_[0-9a-f]{12}$")
+REPORT_RE = re.compile(r"^rpt_[0-9a-f]{12}$")
+FINDING_RE = re.compile(r"^fnd_[0-9a-f]{12}$")
 
 
 def now_iso() -> str:
@@ -904,6 +910,7 @@ def cmd_doctor(args) -> int:
     coord = coord_dir(Path(args.repo))
     problems = []
     event_count = 0
+    strict_state = {"changes": set(), "reports": set(), "findings": set()}
     if not coord.exists():
         problems.append(f"missing coordination directory: {coord}")
     events = event_path(coord)
@@ -922,6 +929,8 @@ def cmd_doctor(args) -> int:
             for key in ("id", "schema", "type", "actor", "ts"):
                 if key not in event:
                     problems.append(f"events.jsonl:{lineno}: missing {key}")
+            if args.strict:
+                problems.extend(validate_event_strict(event, lineno, strict_state))
     try:
         conn = connect(coord)
         indexed = conn.execute("select count(*) as n from events").fetchone()["n"]
@@ -939,6 +948,88 @@ def cmd_doctor(args) -> int:
     print("DOCTOR_OK")
     print(f"events={event_count}")
     return 0
+
+
+def require_fields(event: dict, lineno: int, fields: List[str]) -> List[str]:
+    return [f"events.jsonl:{lineno}: {event.get('type', '<unknown>')} missing {field}" for field in fields if field not in event]
+
+
+def validate_event_strict(event: dict, lineno: int, state: dict) -> List[str]:
+    problems = []
+    event_type = event.get("type")
+    if not EVENT_RE.match(str(event.get("id", ""))):
+        problems.append(f"events.jsonl:{lineno}: invalid event id")
+    if event.get("schema") != SCHEMA:
+        problems.append(f"events.jsonl:{lineno}: unsupported schema {event.get('schema')}")
+
+    if event_type == "change.created":
+        problems.extend(require_fields(event, lineno, ["change_id", "files", "summary", "verification", "risk"]))
+        change_id = event.get("change_id", "")
+        if not CHANGE_RE.match(str(change_id)):
+            problems.append(f"events.jsonl:{lineno}: invalid change_id {change_id}")
+        if not isinstance(event.get("files", []), list):
+            problems.append(f"events.jsonl:{lineno}: files must be a list")
+        if not isinstance(event.get("verification", []), list):
+            problems.append(f"events.jsonl:{lineno}: verification must be a list")
+        if change_id in state["changes"]:
+            problems.append(f"events.jsonl:{lineno}: duplicate change_id {change_id}")
+        state["changes"].add(change_id)
+    elif event_type in ("change.verified", "change.committed", "change.pushed"):
+        problems.extend(require_fields(event, lineno, ["change_id"]))
+        if event.get("change_id") not in state["changes"]:
+            problems.append(f"events.jsonl:{lineno}: unknown change_id {event.get('change_id')}")
+    elif event_type in ("review.completed", "test.completed"):
+        problems.extend(require_fields(event, lineno, ["report_id", "change_id", "decision", "findings"]))
+        report_id = event.get("report_id", "")
+        change_id = event.get("change_id")
+        if not REPORT_RE.match(str(report_id)):
+            problems.append(f"events.jsonl:{lineno}: invalid report_id {report_id}")
+        if change_id not in state["changes"]:
+            problems.append(f"events.jsonl:{lineno}: unknown change_id {change_id}")
+        if report_id in state["reports"]:
+            problems.append(f"events.jsonl:{lineno}: duplicate report_id {report_id}")
+        state["reports"].add(report_id)
+        allowed = ("pass", "concerns", "blocking") if event_type == "review.completed" else ("pass", "fail", "blocked")
+        if event.get("decision") not in allowed:
+            problems.append(f"events.jsonl:{lineno}: invalid decision {event.get('decision')}")
+        findings = event.get("findings", [])
+        if not isinstance(findings, list):
+            problems.append(f"events.jsonl:{lineno}: findings must be a list")
+            findings = []
+        if event_type == "review.completed" and event.get("decision") == "blocking" and not findings:
+            problems.append(f"events.jsonl:{lineno}: blocking review requires a finding")
+        if event_type == "test.completed" and event.get("decision") == "fail" and not event.get("commands") and not findings:
+            problems.append(f"events.jsonl:{lineno}: failing test report requires command or finding")
+        if event_type == "test.completed" and event.get("decision") == "blocked" and not event.get("untested"):
+            problems.append(f"events.jsonl:{lineno}: blocked test report requires untested reason")
+        for finding in findings:
+            finding_id = finding.get("id", "")
+            if not FINDING_RE.match(str(finding_id)):
+                problems.append(f"events.jsonl:{lineno}: invalid finding id {finding_id}")
+            if finding.get("severity", "medium") not in ("low", "medium", "high", "critical", "blocking"):
+                problems.append(f"events.jsonl:{lineno}: invalid severity {finding.get('severity')}")
+            if finding_id in state["findings"]:
+                problems.append(f"events.jsonl:{lineno}: duplicate finding id {finding_id}")
+            state["findings"].add(finding_id)
+    elif event_type == "finding.resolved":
+        problems.extend(require_fields(event, lineno, ["finding_id"]))
+        if event.get("finding_id") not in state["findings"]:
+            problems.append(f"events.jsonl:{lineno}: unknown finding_id {event.get('finding_id')}")
+    elif event_type == "report.resolved":
+        problems.extend(require_fields(event, lineno, ["report_id"]))
+        if event.get("report_id") not in state["reports"]:
+            problems.append(f"events.jsonl:{lineno}: unknown report_id {event.get('report_id')}")
+    elif event_type in ("task.claimed", "task.released", "task.completed"):
+        problems.extend(require_fields(event, lineno, ["role", "change_id"]))
+        if event.get("role") not in ("reviewer", "tester"):
+            problems.append(f"events.jsonl:{lineno}: invalid task role {event.get('role')}")
+        if event.get("change_id") not in state["changes"]:
+            problems.append(f"events.jsonl:{lineno}: unknown change_id {event.get('change_id')}")
+        if event_type == "task.claimed" and "lease_expires_at" not in event:
+            problems.append(f"events.jsonl:{lineno}: task.claimed missing lease_expires_at")
+    else:
+        problems.append(f"events.jsonl:{lineno}: unknown event type {event_type}")
+    return problems
 
 
 def cmd_prompt(args) -> int:
@@ -1114,6 +1205,7 @@ def cmd_export_html(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Structured local coordination CLI for multi-Codex workflows.")
     parser.add_argument("--repo", default=".", help="Repository root.")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     init = sub.add_parser("init")
@@ -1121,6 +1213,7 @@ def build_parser() -> argparse.ArgumentParser:
     rebuild_cmd = sub.add_parser("rebuild")
     rebuild_cmd.set_defaults(func=cmd_rebuild)
     doctor = sub.add_parser("doctor")
+    doctor.add_argument("--strict", action="store_true")
     doctor.set_defaults(func=cmd_doctor)
 
     change = sub.add_parser("change")

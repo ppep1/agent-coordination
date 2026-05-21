@@ -97,6 +97,7 @@ cd /path/to/your/repo
 python3 ~/.codex/skills/agent-coordination/scripts/setup_agent_coordination.py --repo .
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . init
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor --strict
 ```
 
 确认状态：
@@ -402,9 +403,11 @@ Main 不需要等每个 change 都拿到 fresh review/test 才继续；但是一
 
 ```bash
 # 初始化 / 修复
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --version
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . init
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . rebuild
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor --strict
 
 # 查询
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
@@ -445,6 +448,8 @@ skill 自带一个端到端测试脚本，会在临时目录里验证初始化�
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/test_coord.py
 ```
+
+GitHub Actions 也会运行同一组基础检查：`py_compile` 和 `scripts/test_coord.py`。
 
 ## 兼容说明
 

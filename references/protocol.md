@@ -35,6 +35,8 @@ Initialize or repair local state:
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . init
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . rebuild
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor --strict
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --version
 ```
 
 Inspect state:
@@ -191,7 +193,7 @@ If Main Codex is interrupted:
 
 If `coord.db` is deleted or stale, run `coord.py rebuild`. The index is derived from `events.jsonl`.
 
-If coordination state may be corrupt, run `coord.py doctor` first. It validates the event log shape, checks that the SQLite index can be opened, and flags event/index count mismatches that need `coord.py rebuild`.
+If coordination state may be corrupt, run `coord.py doctor` first. It validates the event log shape, checks that the SQLite index can be opened, and flags event/index count mismatches that need `coord.py rebuild`. Use `coord.py doctor --strict` before publishing this skill or debugging coordination corruption; strict mode also validates event ids, required fields, enum values, and references between changes, reports, findings, and tasks.
 
 ## Main Loop Policy
 
@@ -221,6 +223,7 @@ If a watcher is interrupted:
 - `coord.py` serializes writes with `coord.lock`.
 - `events.jsonl` can rebuild `coord.db`.
 - `coord.py doctor` detects malformed event lines, broken SQLite state, and event/index drift before handoff.
+- `coord.py doctor --strict` catches malformed ids, missing required fields, invalid enum values, and broken cross-event references.
 - Unknown changes are rejected for lifecycle and report commands.
 - Reviewer/tester work is represented as tasks. Claims use leases so another watcher can pick up expired work.
 - A detected change is not considered processed until the secondary terminal explicitly marks it processed.
