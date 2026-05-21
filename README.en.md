@@ -134,6 +134,22 @@ The intended workflow is unattended after startup: Main Codex first clarifies th
 
 Normal code edits, reading project files, running local tests, running non-destructive build/format checks, committing, and pushing should not trigger mid-run confirmation after the user has authorized delivery. The limits this skill cannot solve are runtime limits: Codex/app interrupts, context limits, system sleep, process exit, and app restarts. As long as the environment keeps running and permissions are sufficient, the loop can run for a long time unattended; it is not a daemon across app restarts.
 
+### Optional: Fourth Observer Terminal
+
+If you want to check status mid-run, use a regular shell terminal as an Observer. It does not participate in coordination, claim tasks, or write reports. It only reads `.agent-coordination/`:
+
+```bash
+cd /path/to/your/repo
+
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . timeline chg_0001
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . export-html
+```
+
+You may also ask Main Codex, “What is the current status? Do not stop; keep going.” A status-only question should not be treated as a pause or reconfirmation. Main should briefly report `status/open/blockers`, then continue. Only explicit instructions such as “pause,” “stop,” “do not continue,” “wait for my confirmation,” “change direction,” or “do not commit” should interrupt the unattended workflow.
+
 ### Conversation 1: Main Codex
 
 Main Codex owns source edits, targeted verification, change publication, blocker handling, commits, and pushes.
@@ -157,7 +173,8 @@ In this repository:
 7. After fixing a blocker, close handled findings and reports with finding resolve and report resolve.
 8. After the user approves the route and says to start, do not stop at roadmap phase boundaries to report progress, ask whether to continue, or wait for confirmation; publish phase progress as changes/reports and continue to final delivery.
 9. Stop for human input only for newly discovered permissions/credentials/destructive risk missed by preflight, conflicting requirements, environment interruption, or explicit user interrupt.
-10. Before final handoff, run:
+10. If the user only asks for status mid-run, briefly report status/open/blockers and continue; do not treat a status question as a pause. Interrupt the unattended workflow only when the user explicitly asks to pause, stop, wait for confirmation, change direction, or not commit.
+11. Before final handoff, run:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
    git status --short

@@ -1055,7 +1055,8 @@ In this repository:
 8. Use show/open/timeline when you need detail on a change.
 9. After the user approves the route and says to start, do not stop at roadmap phase boundaries to report progress, ask whether to continue, or wait for confirmation; publish progress as changes/reports and continue to final delivery.
 10. Stop for human input only for newly discovered permissions/credentials/destructive risk missed by preflight, conflicting requirements, environment interruption, or explicit user interrupt.
-11. Before final handoff, run:
+11. If the user only asks for status mid-run, briefly report status/open/blockers and continue; do not treat a status question as a pause. Interrupt the unattended workflow only when the user explicitly asks to pause, stop, wait for confirmation, change direction, or not commit.
+12. Before final handoff, run:
    {coord_cmd} {repo_arg} doctor
    {coord_cmd} {repo_arg} blockers
    git status --short

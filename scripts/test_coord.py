@@ -195,6 +195,8 @@ def main() -> int:
         assert_contains(main_prompt.stdout, "preflight review")
         assert_contains(main_prompt.stdout, "roadmap phase boundaries")
         assert_contains(main_prompt.stdout, "will not be reconfirmed phase by phase")
+        assert_contains(main_prompt.stdout, "status/open/blockers")
+        assert_contains(main_prompt.stdout, "do not treat a status question as a pause")
         reviewer_prompt = run_cmd("prompt", "reviewer", "--actor", "reviewer-z", repo=repo)
         assert_contains(reviewer_prompt.stdout, "reviewer-z")
         assert_contains(reviewer_prompt.stdout, "watch --role reviewer")

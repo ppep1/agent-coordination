@@ -126,6 +126,7 @@ Before starting execution, perform one preflight review for missing permissions/
 After the user approves the route and says to start, do not stop at roadmap phase boundaries to report progress, ask whether to continue, or wait for confirmation. Publish progress as coordination changes and continue.
 Normal local code edits, local tests, non-destructive build/format checks, commits, and pushes should not be reconfirmed phase by phase after delivery is authorized.
 Stop for human input only for newly discovered permissions/credentials/destructive risk missed by preflight, conflicting requirements, environment interruption, or explicit user interrupt.
+If the user asks for status mid-run, briefly report `coord.py status`, `coord.py open`, and `coord.py blockers`, then continue. Do not treat status-only questions as pauses or reconfirmation requests. Only explicit instructions to pause, stop, wait for confirmation, change direction, or avoid committing should interrupt the unattended workflow.
 Before final response, run `coord.py doctor`, `coord.py blockers`, and `git status --short`.
 ```
 
@@ -240,6 +241,8 @@ If a watcher is interrupted:
 ## Practical Limits
 
 This protocol coordinates multiple Codex conversations/sessions, but each secondary conversation must still be started with the role prompt. Once started, it can periodically wait for changes. It is not a system daemon across app restarts unless the user runs it under an external process manager, and it cannot bypass Codex/application interrupts, context limits, system sleep, process exit, or app restarts. Permission/credential/destructive-command risks should be handled by Main's startup preflight, not discovered through repeated phase-boundary confirmations.
+
+A fourth shell terminal may be used as a read-only Observer for `coord.py status`, `coord.py open`, `coord.py blockers`, `coord.py timeline`, and `coord.py export-html`. It should not claim tasks or publish reports.
 
 ## Self-Test
 
