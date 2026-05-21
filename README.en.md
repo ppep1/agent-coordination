@@ -1,45 +1,45 @@
 # Agent Coordination
 
 <p>
-  <a href="README.md"><img alt="中文" src="https://img.shields.io/badge/Language-%E4%B8%AD%E6%96%87-blue"></a>
-  <a href="README.en.md"><img alt="English" src="https://img.shields.io/badge/Language-English-lightgrey"></a>
+  <a href="README.md"><img alt="中文" src="https://img.shields.io/badge/Language-%E4%B8%AD%E6%96%87-lightgrey"></a>
+  <a href="README.en.md"><img alt="English" src="https://img.shields.io/badge/Language-English-blue"></a>
 </p>
 
-一个 Codex skill，用本地结构化事件日志协调 Main Codex、Reviewer Codex 和 Tester Codex。它适合你想开多个 Codex 终端协同工作，但又不想靠聊天复制粘贴、人工等待和记忆状态来同步的场景。
+A Codex skill for coordinating Main Codex, Reviewer Codex, and Tester Codex through a local structured event log. It is designed for workflows where you run multiple Codex terminals but do not want to coordinate them through copy/paste, chat state, or manual waiting.
 
-## 它解决什么问题
+## What Problem It Solves
 
-你以前可能是这样用的：
-
-```text
-开三个 Codex 终端
--> 让它们都读 skill
--> Main 写代码
--> Reviewer 人工看
--> Tester 人工跑
--> 你自己在中间协调状态
-```
-
-这个方式能跑，但有几个问题：
-
-- Main Codex 容易因为等 Reviewer/Tester 反馈而空转。
-- 审查和测试反馈散落在聊天里，难以绑定到具体 change。
-- 多个 agent 如果都能改源码，会造成冲突和责任边界混乱。
-- 迟到的 test failure 或 blocking review 容易被忽略。
-- 中断恢复困难，不知道哪个 change 已经 review/test。
-
-这个 skill 的核心思路是：
+The old manual workflow often looks like this:
 
 ```text
-Main Codex: 持续实现 + 验证 + 发布 change
-Reviewer Codex: watch -> 只读审查 -> report -> mark-processed -> watch
-Tester Codex: watch -> 运行测试 -> report -> mark-processed -> watch
-Main Codex: status/blockers -> 修 blocker -> 继续
+Open three Codex terminals
+-> ask all of them to read the skill
+-> Main writes code
+-> Reviewer reviews manually
+-> Tester runs tests manually
+-> you coordinate the state yourself
 ```
 
-## 文件和状态模型
+That works, but it has real failure modes:
 
-在目标项目里初始化后，会生成：
+- Main Codex can stall while waiting for Reviewer/Tester feedback.
+- Review and test findings can get lost in chat and lose their link to a specific change.
+- Multiple agents editing source files creates conflicts and unclear ownership.
+- Late test failures or blocking review findings can be missed.
+- Recovery after interruption is hard because it is unclear which change was reviewed or tested.
+
+This skill changes the workflow to:
+
+```text
+Main Codex: implement + verify + publish change
+Reviewer Codex: watch -> read-only review -> report -> mark-processed -> watch
+Tester Codex: watch -> run tests -> report -> mark-processed -> watch
+Main Codex: status/blockers -> fix blockers -> continue
+```
+
+## Runtime State Model
+
+After initialization, the target repository gets:
 
 ```text
 .agent-coordination/
@@ -56,42 +56,42 @@ Main Codex: status/blockers -> 修 blocker -> 继续
   templates/
 ```
 
-- `events.jsonl`：append-only 结构化事件日志，是真相来源。
-- `coord.db`：可从 `events.jsonl` 重建的 SQLite 查询索引。
-- `changes.md`：人类可读的变更 ledger。
-- `reviews.md`：人类可读的审查报告 ledger。
-- `tests.md`：人类可读的测试报告 ledger。
-- `coord.py`：推荐的结构化 CLI，负责写锁、事件写入、查询、报告和恢复。
+- `events.jsonl`: append-only structured event log and source of truth.
+- `coord.db`: rebuildable SQLite query index.
+- `changes.md`: human-readable change ledger.
+- `reviews.md`: human-readable review report ledger.
+- `tests.md`: human-readable test report ledger.
+- `coord.py`: the preferred structured CLI for locking, event writes, queries, reports, and recovery.
 
-`.agent-coordination/` 是运行时状态，不是 skill 本体，不要提交到业务仓库。初始化脚本默认会把它加入 `.gitignore`。
+`.agent-coordination/` is runtime state, not the skill itself. Do not commit it to the target repository. The setup script adds it to `.gitignore` by default.
 
-## 安装
+## Install
 
-把 skill clone 到 Codex skills 目录：
+Clone this skill into your Codex skills directory:
 
 ```bash
 mkdir -p ~/.codex/skills
 git clone https://github.com/ppep1/agent-coordination.git ~/.codex/skills/agent-coordination
 ```
 
-如果你已经装过：
+If already installed:
 
 ```bash
 cd ~/.codex/skills/agent-coordination
 git pull
 ```
 
-重新打开 Codex 会话后即可使用。
+Open a new Codex session after installation.
 
-## 第一次在项目里启用
+## Enable It In A Project
 
-进入你要开发的目标 repo：
+Enter the target repository:
 
 ```bash
 cd /path/to/your/repo
 ```
 
-初始化协调目录：
+Initialize coordination:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/setup_agent_coordination.py --repo .
@@ -99,45 +99,45 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . init
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
 ```
 
-确认状态：
+Check current state:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
 ```
 
-第一次通常会看到没有 change、没有 blocker。
+Initially there should usually be no changes and no blockers.
 
-## 三个终端怎么开
+## How To Run The Three Terminals
 
-推荐你还是开三个 Codex 终端，但每个终端的职责更清楚。
+You still open three Codex terminals. The difference is that each terminal now has a clear role and uses `coord.py` to exchange state.
 
-### 终端 1：Main Codex
+### Terminal 1: Main Codex
 
-Main Codex 负责写代码、运行 targeted verification、发布 change、处理 blocker、提交和推送。
+Main Codex owns source edits, targeted verification, change publication, blocker handling, commits, and pushes.
 
-给 Main Codex 的提示词可以直接用：
+Use this prompt for Main Codex:
 
 ```text
-你是 Main Codex。使用 agent-coordination skill。
+You are Main Codex. Use the agent-coordination skill.
 
-在这个 repo 中：
-1. 你拥有源码修改、git 状态、验证、提交/推送和最终用户沟通。
-2. 每个实现增量前运行：
+In this repository:
+1. You own source edits, git state, verification, commits/pushes, and final user communication.
+2. Before each implementation increment, run:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
-3. 每个小增量完成后运行 targeted verification，然后发布 change：
+3. After each small increment, run targeted verification, then publish a change:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create --file <file> --summary "<summary>" --verify "<command>" --risk medium
-4. 不要等待 fresh reviewer/tester report 才继续低/中风险 verified increment。
-5. 如果 blockers/fail/blocked 出现，先修，再继续无关工作。
-6. 修复 blocker 后，用 finding resolve 和 report resolve 关闭已处理问题。
-7. 最终交付前运行：
+4. Do not wait for fresh reviewer/tester reports before continuing verified low/medium-risk increments.
+5. If blockers/fail/blocked appears, fix it before unrelated work.
+6. After fixing a blocker, close handled findings and reports with finding resolve and report resolve.
+7. Before final handoff, run:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
    git status --short
 ```
 
-Main 每做完一个小改动，就发布一个 change：
+After Main finishes a small change, publish it:
 
 ```bash
 pytest tests/test_parser.py
@@ -149,44 +149,44 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change crea
   --risk medium
 ```
 
-命令会输出类似：
+The command prints a change id:
 
 ```text
 chg_0001
 ```
 
-这就是 Reviewer/Tester 后续报告要引用的 change id。
+Reviewer and Tester reports should reference that change id.
 
-### 终端 2：Reviewer Codex
+### Terminal 2: Reviewer Codex
 
-Reviewer Codex 默认只读代码，不改源码。
+Reviewer Codex reads source files but does not edit them by default.
 
-给 Reviewer Codex 的提示词可以直接用：
+Use this prompt for Reviewer Codex:
 
 ```text
-你是 Reviewer Codex。使用 agent-coordination skill。
+You are Reviewer Codex. Use the agent-coordination skill.
 
-规则：
-1. 不改源码，不 commit，不 push，不 reset，不安装依赖，不跑 broad formatter。
-2. 只做只读代码审查。
-3. 等待新 change：
+Rules:
+1. Do not edit source files, commit, push, reset, install dependencies, or run broad formatters.
+2. Perform read-only code review only.
+3. Wait for new changes:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --interval 60
-4. 发现新 change 后，读取输出中的 change_id、files、verification、risk。
-5. 审查 touched files 和相关契约，只报告真实缺陷、回归、兼容性风险、缺失测试、安全/并发问题。
-6. 发布报告：
+4. When a change appears, read change_id, files, verification, and risk from the output.
+5. Review touched files and relevant contracts. Report only real defects, regressions, compatibility risks, missing tests, security issues, or concurrency issues.
+6. Publish a report:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review --actor reviewer-a --change <change_id> --decision pass|concerns|blocking --files-read <file> --finding "severity:file:line:message"
-7. 报告后标记 processed：
+7. After reporting, mark processed:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed --role reviewer --actor reviewer-a --change <change_id>
-8. 然后继续 watch。
+8. Then watch again.
 ```
 
-Reviewer 开始等待：
+Start watching:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --interval 60
 ```
 
-如果 Main 发布了 change，Reviewer 会看到类似：
+When Main publishes a change, Reviewer sees:
 
 ```json
 {
@@ -203,7 +203,7 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --rol
 }
 ```
 
-如果审查发现非阻塞问题：
+If Reviewer finds a non-blocking concern:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review \
@@ -219,7 +219,7 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-proces
   --change chg_0001
 ```
 
-如果没有问题：
+If Reviewer finds no material issue:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review \
@@ -234,7 +234,7 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-proces
   --change chg_0001
 ```
 
-如果是必须先修的问题：
+If Reviewer finds an issue Main must fix first:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review \
@@ -245,35 +245,35 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report revi
   --finding "high:src/parser.py:42:Empty input crashes the parser"
 ```
 
-### 终端 3：Tester Codex
+### Terminal 3: Tester Codex
 
-Tester Codex 负责真实运行验证，不假装覆盖。
+Tester Codex runs real validation and records what was not covered.
 
-给 Tester Codex 的提示词可以直接用：
+Use this prompt for Tester Codex:
 
 ```text
-你是 Tester Codex。使用 agent-coordination skill。
+You are Tester Codex. Use the agent-coordination skill.
 
-规则：
-1. 不改源码，不 commit，不 push，不 reset，不安装依赖，不跑破坏性命令。
-2. 不假装硬件、vendor SDK、外部服务覆盖。
-3. 等待新 change：
+Rules:
+1. Do not edit source files, commit, push, reset, install dependencies, or run destructive commands.
+2. Do not fake hardware, vendor SDK, or external-service coverage.
+3. Wait for new changes:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --interval 60
-4. 发现新 change 后，优先运行 change 里列出的 verification command；再根据 touched files 补充 focused tests。
-5. 发布测试报告：
+4. When a change appears, run the listed verification command first when safe, then add focused tests based on touched files.
+5. Publish a test report:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test --actor tester-a --change <change_id> --decision pass|fail|blocked --command "<command>" --untested "<reason>"
-6. 报告后标记 processed：
+6. After reporting, mark processed:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed --role tester --actor tester-a --change <change_id>
-7. 然后继续 watch。
+7. Then watch again.
 ```
 
-Tester 开始等待：
+Start watching:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --interval 60
 ```
 
-测试通过：
+If tests pass:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test \
@@ -288,7 +288,7 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-proces
   --change chg_0001
 ```
 
-测试失败：
+If tests fail:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test \
@@ -299,7 +299,7 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test
   --finding "high:tests/test_parser.py:18:Parser regression test fails"
 ```
 
-环境缺依赖或外部服务不可用：
+If dependencies or external services are unavailable:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test \
@@ -310,23 +310,23 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test
   --untested "pytest is not installed in this environment"
 ```
 
-## Main 怎么处理反馈
+## How Main Handles Feedback
 
-Main 随时可以查状态：
+Main can check state at any time:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
 ```
 
-如果看到：
+If blockers show:
 
 ```text
 rpt_abc123 chg_0001 reviewer:blocking actor=reviewer-a
 fnd_def456 chg_0001 high src/parser.py:42 Empty input crashes the parser
 ```
 
-Main 应该先修这个问题，发布新的 change：
+Main fixes the issue and publishes a follow-up change:
 
 ```bash
 pytest tests/test_parser.py
@@ -339,30 +339,30 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change crea
   --risk low
 ```
 
-然后关闭旧 finding 和 report：
+Then Main closes the old finding and report:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . finding resolve fnd_def456 --reason "Fixed in chg_0002"
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report resolve rpt_abc123 --reason "Fixed and verified in chg_0002"
 ```
 
-再确认：
+Confirm blockers are gone:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
 ```
 
-输出：
+Expected output:
 
 ```text
 No open blockers.
 ```
 
-## 推荐日常循环
+## Recommended Daily Loop
 
 ```text
 Main:
-  blockers/status -> 实现一个小增量 -> targeted verification -> change create -> blockers/status -> 继续
+  blockers/status -> implement one small increment -> targeted verification -> change create -> blockers/status -> continue
 
 Reviewer:
   watch -> review -> report review -> mark-processed -> watch
@@ -371,43 +371,43 @@ Tester:
   watch -> run tests -> report test -> mark-processed -> watch
 ```
 
-Main 不需要等每个 change 都拿到 fresh review/test 才继续；但是一旦 `blockers` 出现有效问题，必须先处理。
+Main does not need to wait for fresh review/test reports after every change. However, once `blockers` reports a valid issue, Main should handle it before unrelated work.
 
-## 常用命令速查
+## Command Cheat Sheet
 
 ```bash
-# 初始化 / 修复
+# Initialize / repair
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . init
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . rebuild
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
 
-# 查询
+# Query
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . next --role tester --actor tester-a
 
-# change 生命周期
+# Change lifecycle
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create --file src/a.py --summary "..." --verify "pytest ..."
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change verify chg_0001
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change commit chg_0001
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change push chg_0001
 
-# 报告
+# Reports
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review --change chg_0001 --decision pass
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test --change chg_0001 --decision pass --command "pytest"
 
-# 关闭已处理问题
+# Resolve handled issues
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . finding resolve fnd_abc123 --reason "Fixed in chg_0002"
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report resolve rpt_abc123 --reason "Fixed and verified in chg_0002"
 ```
 
-## 兼容说明
+## Compatibility
 
-`scripts/watch_changes.py` 仍然保留，用于旧的 Markdown-only 工作流。新项目应优先使用 `scripts/coord.py`，因为它提供结构化事件、文件锁、SQLite 状态索引和更明确的恢复能力。
+`scripts/watch_changes.py` remains available for older Markdown-only workflows. New workflows should prefer `scripts/coord.py` because it provides structured events, file locking, a SQLite status index, and clearer recovery behavior.
 
-## 限制
+## Limits
 
-- 这不是常驻 daemon，也不是云端 agent 编排平台。
-- 需要你为 Reviewer/Tester 分别启动 Codex 终端并给出对应角色提示词。
-- 目前没有任务租约，所以多个 watcher 仍可能重复处理同一个 change。
-- 当前文件锁使用 Unix `fcntl`，适合 macOS/Linux。
+- This is not a daemon or cloud orchestration platform.
+- Reviewer and Tester terminals still need to be started with role-specific prompts.
+- There is no task lease yet, so multiple watchers can still process the same change.
+- File locking currently uses Unix `fcntl`, so macOS/Linux are the intended environments.
