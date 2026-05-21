@@ -191,9 +191,15 @@ def main() -> int:
         rebuilt = run_cmd("blockers", repo=repo)
         assert_contains(rebuilt.stdout, "No open blockers.")
 
-        prompt = run_cmd("prompt", "reviewer", "--actor", "reviewer-z", repo=repo)
-        assert_contains(prompt.stdout, "reviewer-z")
-        assert_contains(prompt.stdout, "watch --role reviewer")
+        main_prompt = run_cmd("prompt", "main", repo=repo)
+        assert_contains(main_prompt.stdout, "roadmap phase boundaries")
+        reviewer_prompt = run_cmd("prompt", "reviewer", "--actor", "reviewer-z", repo=repo)
+        assert_contains(reviewer_prompt.stdout, "reviewer-z")
+        assert_contains(reviewer_prompt.stdout, "watch --role reviewer")
+        assert_contains(reviewer_prompt.stdout, "Do not ask the user to relay results")
+        tester_prompt = run_cmd("prompt", "tester", "--actor", "tester-z", repo=repo)
+        assert_contains(tester_prompt.stdout, "tester-z")
+        assert_contains(tester_prompt.stdout, "Do not ask the user to relay results")
 
         html_report = run_cmd("export-html", repo=repo).stdout.strip()
         html_path = Path(html_report)

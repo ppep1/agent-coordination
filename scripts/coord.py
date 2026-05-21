@@ -1052,7 +1052,9 @@ In this repository:
 5. If blockers/fail/blocked appears, fix it before unrelated work.
 6. After fixing a blocker, close handled findings and reports with finding resolve and report resolve.
 7. Use show/open/timeline when you need detail on a change.
-8. Before final handoff, run:
+8. After the user approves the route and says to start, do not stop at roadmap phase boundaries to report progress, ask whether to continue, or wait for confirmation; publish progress as changes/reports and continue to final delivery.
+9. Stop for human input only for missing permissions, destructive-risk operations, external credentials/logins, conflicting requirements, or explicit user interrupt.
+10. Before final handoff, run:
    {coord_cmd} {repo_arg} doctor
    {coord_cmd} {repo_arg} blockers
    git status --short
@@ -1072,7 +1074,7 @@ Rules:
    {coord_cmd} {repo_arg} report review --actor {actor} --change <change_id> --decision pass|concerns|blocking --files-read <file> --finding "severity:file:line:message"
 8. After reporting, mark processed:
    {coord_cmd} {repo_arg} mark-processed --role reviewer --actor {actor} --change <change_id>
-9. Then watch again.
+9. Do not ask the user to relay results or confirm continuation; write the report to coord, then watch again.
 """
     elif role == "tester":
         text = f"""You are Tester Codex. Use the agent-coordination skill.
@@ -1087,7 +1089,7 @@ Rules:
    {coord_cmd} {repo_arg} report test --actor {actor} --change <change_id> --decision pass|fail|blocked --command "<command>" --untested "<reason>"
 6. After reporting, mark processed:
    {coord_cmd} {repo_arg} mark-processed --role tester --actor {actor} --change <change_id>
-7. Then watch again.
+7. Do not ask the user to relay results or confirm continuation; write the report to coord, then watch again.
 """
     else:
         print(f"UNKNOWN_ROLE {role}")

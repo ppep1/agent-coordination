@@ -1,11 +1,11 @@
 ---
 name: agent-coordination
-description: Coordinate a primary implementation Codex with reviewer/tester Codex watchers using a local structured event log, SQLite status index, task leases, diff snapshots, and Markdown compatibility ledgers. Use when the user wants Main Codex to keep implementing, testing, committing, and pushing without idle waiting while secondary terminals independently review/test changes and report blockers through local files.
+description: Coordinate a primary implementation Codex with reviewer/tester Codex watchers using a local structured event log, SQLite status index, task leases, diff snapshots, and Markdown compatibility ledgers. Use when the user wants Main Codex to keep implementing, testing, committing, and pushing without idle waiting while secondary Codex conversations independently review/test changes and report blockers through local files.
 ---
 
 # Agent Coordination
 
-Use this skill to run a multi-Codex workflow in one repository. Main Codex keeps implementation moving; Reviewer/Tester Codex terminals provide asynchronous safety checks through local structured events.
+Use this skill to run a multi-Codex workflow in one repository. Main Codex keeps implementation moving; Reviewer/Tester Codex conversations provide asynchronous safety checks through local structured events.
 
 Read `references/protocol.md` when setting up a repo, recovering state, debugging watcher behavior, or writing role prompts. The README files are for human installation and usage.
 
@@ -25,7 +25,7 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . init
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor --strict
 ```
 
-Use `coord.py prompt` to generate role prompts for extra terminals:
+Use `coord.py prompt` to generate role prompts for extra Codex conversations:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt main
@@ -43,7 +43,7 @@ coord blockers/open/status
 -> coord change create --capture-diff
 -> coord blockers/open/status
 -> commit/push when appropriate
--> continue without waiting silently for fresh reports
+-> continue to final delivery without phase-boundary approval stops
 ```
 
 Publish changes with:
@@ -61,7 +61,7 @@ Missing reports mean “pending review,” not approval. They do not stop verifi
 
 ## Reviewer/Tester Loop
 
-Secondary terminals should claim work before acting:
+Secondary Codex conversations should claim work before acting:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --claim --interval 60

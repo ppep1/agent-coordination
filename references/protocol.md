@@ -2,9 +2,11 @@
 
 ## Core Idea
 
-Use a local, ignored coordination directory as a structured append-only event log with Markdown compatibility ledgers. Main Codex publishes changes and keeps moving on verified small increments. Other Codex terminals periodically check for change events and respond with review/test reports.
+Use a local, ignored coordination directory as a structured append-only event log with Markdown compatibility ledgers. Main Codex publishes changes and keeps moving on verified small increments. Other Codex conversations periodically check for change events and respond with review/test reports.
 
 This avoids manual copy/paste between agents while keeping all work recoverable after interruptions.
+
+The intended operating mode is unattended after startup. Main Codex may clarify the task and proposed route first, but once the user approves the route and says to start, it should continue until final delivery instead of stopping at every roadmap phase boundary for progress reports. Reviewer/Tester conversations receive their role prompts once, then keep working through `coord.py watch`, `coord.py report`, and `coord.py mark-processed` without asking the user to relay results.
 
 ## Directory Contract
 
@@ -120,6 +122,8 @@ After every code-change cycle, run `coord.py blockers` and inspect `coord.py sta
 Resolve valid blocking findings from review/test reports before unrelated work or final handoff.
 Do not treat missing secondary reports as approval, but do not idle by default: if no new blocking report exists, continue the next verified small increment or commit/push when the user has asked for continuous delivery.
 If a late report finds a valid blocker after a commit/push, fix it in a follow-up change.
+After the user approves the route and says to start, do not stop at roadmap phase boundaries to report progress, ask whether to continue, or wait for confirmation. Publish progress as coordination changes and continue.
+Stop for human input only for missing permissions, destructive-risk operations, required external credentials/logins, conflicting requirements, or explicit user interrupt.
 Before final response, run `coord.py doctor`, `coord.py blockers`, and `git status --short`.
 ```
 
@@ -134,7 +138,7 @@ Report concrete bugs, regressions, missing tests, compatibility risks, and unsaf
 Publish findings with `coord.py report review`; include `--files-read` for inspected files and `--finding` for material findings.
 Use `pass` only when no material issue remains, `concerns` for non-blocking risks, and `blocking` for issues Main must fix before unrelated work or final handoff.
 After writing the review, run `coord.py mark-processed`.
-If no update appears, stay silent and keep waiting.
+Do not ask the user to relay results or confirm continuation. If no update appears, stay silent and keep waiting.
 ```
 
 ## Tester Codex Prompt
@@ -148,6 +152,7 @@ When a new change appears, run the listed verification commands when safe, then 
 Publish results with `coord.py report test`; include each command with `--command`, use `--untested` for anything not actually covered, and add `--finding` for material failures.
 Use `pass` only for commands that actually passed, `fail` for real failures, and `blocked` for missing dependencies, unavailable services, or unsafe commands.
 After writing the test report, run `coord.py mark-processed`.
+Do not ask the user to relay results or confirm continuation.
 If no update appears, stay silent and keep waiting.
 ```
 
@@ -232,7 +237,7 @@ If a watcher is interrupted:
 
 ## Practical Limits
 
-This protocol coordinates multiple Codex terminals, but each secondary terminal must still be started with the role prompt. Once started, it can periodically wait for changes. It is not a system daemon across app restarts unless the user runs it under an external process manager.
+This protocol coordinates multiple Codex conversations/sessions, but each secondary conversation must still be started with the role prompt. Once started, it can periodically wait for changes. It is not a system daemon across app restarts unless the user runs it under an external process manager, and it cannot bypass Codex/application interrupts, context limits, system sleep, or missing permissions.
 
 ## Self-Test
 

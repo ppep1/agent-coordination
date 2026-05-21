@@ -5,7 +5,7 @@
   <a href="README.en.md"><img alt="English" src="https://img.shields.io/badge/Language-English-blue"></a>
 </p>
 
-A Codex skill for coordinating Main Codex, Reviewer Codex, and Tester Codex through a local structured event log. It is designed for workflows where you run multiple Codex terminals but do not want to coordinate them through copy/paste, chat state, or manual waiting.
+A Codex skill for coordinating Main Codex, Reviewer Codex, and Tester Codex through a local structured event log. It is designed for workflows where you run multiple Codex conversations/sessions in the same project but do not want to coordinate them through copy/paste, chat state, or manual waiting.
 
 ## How This Differs From Built-In Codex Subagents
 
@@ -14,21 +14,21 @@ Codex's built-in subagent system is already a good fit for many parallel tasks: 
 | Capability | Built-in Codex subagents | Agent Coordination skill |
 | --- | --- | --- |
 | Typical use | One-shot or short-lived delegation: inspect code, implement a local change, parallelize well-scoped subtasks | Long-running collaboration: Main keeps developing while Reviewer/Tester independently watch, claim, and report |
-| Lifecycle | Created, waited on, and integrated by Main Codex inside the current session | Runs across separate terminals, with state stored in the target repo's `.agent-coordination/` directory |
+| Lifecycle | Created, waited on, and integrated by Main Codex inside the current session | Runs across separate Codex conversations/sessions, with state stored in the target repo's `.agent-coordination/` directory |
 | State record | Mostly lives in conversation context and subagent final messages | `events.jsonl` is the source of truth, `coord.db` is queryable, Markdown ledgers are readable |
 | Recovery | Works well inside the current task; after session/context changes it depends on Main's memory or summaries | Recover with `status/open/blockers/timeline/doctor --strict` |
 | Review/test ownership | Can be delegated, but results are usually received once by Main Codex | Reviewer/Tester have stable roles, claim/lease, report quality gates, and processed state |
 | Duplicate work control | Main Codex coordinates to avoid duplicate delegation | `claim --ttl` and leases prevent multiple Reviewer/Tester terminals from processing the same change |
 | Audit and handoff | Depends on chat history | Changes, reviews, tests, and resolves are structured events and can be exported to HTML |
 
-In short: built-in subagents are closer to parallel worker threads owned by Main Codex; this skill is a local, file-backed collaboration protocol. If you only need one subagent to inspect code or patch a small module, use built-in subagents. If you want Main/Reviewer/Tester terminals to keep working over time without losing state, this skill is the better fit.
+In short: built-in subagents are closer to parallel worker threads owned by Main Codex; this skill is a local, file-backed collaboration protocol. If you only need one subagent to inspect code or patch a small module, use built-in subagents. If you want Main/Reviewer/Tester Codex conversations to keep working over time without losing state, this skill is the better fit.
 
 ## What Problem It Solves
 
 The old manual workflow often looks like this:
 
 ```text
-Open three Codex terminals
+Open three Codex conversations/sessions
 -> ask all of them to read the skill
 -> Main writes code
 -> Reviewer reviews manually
@@ -126,11 +126,15 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
 
 Initially there should usually be no changes and no blockers.
 
-## How To Run The Three Terminals
+## How To Run The Three Codex Conversations
 
-You still open three Codex terminals. The difference is that each terminal now has a clear role and uses `coord.py` to exchange state.
+Open three Codex conversations/sessions in the same project. They are all normal Codex chat interfaces; the difference is that each one receives a different role prompt and exchanges state through the same `.agent-coordination/` directory.
 
-### Terminal 1: Main Codex
+The intended workflow is unattended after startup: Main Codex clarifies the task and route, waits for your explicit approval to start, then keeps going until final delivery. It should not stop at every roadmap phase boundary to report progress or ask whether to continue. Reviewer/Tester receive their prompts once and then need no further chat interaction; they work through `coord.py watch/report/mark-processed`. You can observe what they did at any time with `status/open/blockers/timeline/export-html`.
+
+Human intervention should only be needed for missing permissions or services, destructive-risk commands, conflicting requirements, purchases/logins/credentials, or an explicit user interrupt. As long as the environment keeps running and permissions are sufficient, the loop can run for a long time unattended; it is not a daemon across app restarts.
+
+### Conversation 1: Main Codex
 
 Main Codex owns source edits, targeted verification, change publication, blocker handling, commits, and pushes.
 
@@ -150,7 +154,9 @@ In this repository:
 4. Do not wait for fresh reviewer/tester reports before continuing verified low/medium-risk increments.
 5. If blockers/fail/blocked appears, fix it before unrelated work.
 6. After fixing a blocker, close handled findings and reports with finding resolve and report resolve.
-7. Before final handoff, run:
+7. After the user approves the route and says to start, do not stop at roadmap phase boundaries to report progress, ask whether to continue, or wait for confirmation; publish phase progress as changes/reports and continue to final delivery.
+8. Stop for human input only for missing permissions, destructive-risk operations, external credentials, conflicting requirements, or explicit user interrupt.
+9. Before final handoff, run:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
    git status --short
@@ -183,7 +189,7 @@ chg_0001
 
 Reviewer and Tester reports should reference that change id.
 
-### Terminal 2: Reviewer Codex
+### Conversation 2: Reviewer Codex
 
 Reviewer Codex reads source files but does not edit them by default.
 
@@ -203,7 +209,7 @@ Rules:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review --actor reviewer-a --change <change_id> --decision pass|concerns|blocking --files-read <file> --finding "severity:file:line:message"
 7. After reporting, mark processed; this completes the claimed task:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed --role reviewer --actor reviewer-a --change <change_id>
-8. Then watch again.
+8. Do not wait for chat confirmation or ask the user to relay results; write the report to coord, then watch again.
 ```
 
 You can also generate the latest prompt:
@@ -277,7 +283,7 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report revi
   --finding "high:src/parser.py:42:Empty input crashes the parser"
 ```
 
-### Terminal 3: Tester Codex
+### Conversation 3: Tester Codex
 
 Tester Codex runs real validation and records what was not covered.
 
@@ -296,7 +302,7 @@ Rules:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test --actor tester-a --change <change_id> --decision pass|fail|blocked --command "<command>" --untested "<reason>"
 6. After reporting, mark processed; this completes the claimed task:
    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed --role tester --actor tester-a --change <change_id>
-7. Then watch again.
+7. Do not wait for chat confirmation or ask the user to relay results; write the report to coord, then watch again.
 ```
 
 Start watching:
@@ -474,6 +480,6 @@ GitHub Actions runs the same baseline checks: `py_compile` and `scripts/test_coo
 ## Limits
 
 - This is not a daemon or cloud orchestration platform.
-- Reviewer and Tester terminals still need to be started with role-specific prompts.
+- Reviewer and Tester Codex conversations/sessions still need to be started with role-specific prompts.
 - Task leases are local coordination-state locks, not distributed locks across machines.
 - File locking currently uses Unix `fcntl`, so macOS/Linux are the intended environments.
