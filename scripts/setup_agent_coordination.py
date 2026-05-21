@@ -35,7 +35,7 @@ def main() -> int:
     repo = Path(args.repo).expanduser().resolve()
     coord = repo / ".agent-coordination"
 
-    for subdir in ("reports", "status", "templates"):
+    for subdir in ("reports", "templates"):
         (coord / subdir).mkdir(parents=True, exist_ok=True)
     for subdir in ("artifacts", "logs"):
         (coord / subdir).mkdir(parents=True, exist_ok=True)
@@ -52,21 +52,21 @@ def main() -> int:
     reviews = dedent("""\
     # Coordination Reviews
 
-    Reviewer Codex terminals publish structured reports with `coord.py report review`.
+    Reviewer Codex conversations publish structured reports with `coord.py report review`.
 
     """)
 
     tests = dedent("""\
     # Coordination Tests
 
-    Tester Codex terminals publish structured reports with `coord.py report test`.
+    Tester Codex conversations publish structured reports with `coord.py report test`.
 
     """)
 
     state = {
         "schema": 2,
         "created_at": created_at,
-        "mode": "structured-events-with-markdown-compat",
+        "mode": "structured-events",
         "repo": str(repo),
         "events": "events.jsonl",
         "index": "coord.db",

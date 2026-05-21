@@ -15,7 +15,7 @@ Codex's built-in subagent system is already a good fit for many parallel tasks: 
 | --- | --- | --- |
 | Typical use | One-shot or short-lived delegation: inspect code, implement a local change, parallelize well-scoped subtasks | Long-running collaboration: Main keeps developing while Reviewer/Tester independently watch, claim, and report |
 | Lifecycle | Created, waited on, and integrated by Main Codex inside the current session | Runs across separate Codex conversations/sessions, with state stored in the target repo's `.agent-coordination/` directory |
-| State record | Mostly lives in conversation context and subagent final messages | `events.jsonl` is the source of truth, `coord.db` is queryable, Markdown ledgers are readable |
+| State record | Mostly lives in conversation context and subagent final messages | `events.jsonl` is the source of truth, `coord.db` is queryable, Markdown ledgers are human-readable records only |
 | Recovery | Works well inside the current task; after session/context changes it depends on Main's memory or summaries | Recover with `status/open/blockers/timeline/doctor --strict` |
 | Review/test ownership | Can be delegated, but results are usually received once by Main Codex | Reviewer/Tester have stable roles, claim/lease, report quality gates, and processed state |
 | Duplicate work control | Main Codex coordinates to avoid duplicate delegation | `claim --ttl` and leases prevent multiple Reviewer/Tester terminals from processing the same change |
@@ -68,15 +68,14 @@ After initialization, the target repository gets:
   artifacts/
   logs/
   reports/
-  status/
   templates/
 ```
 
 - `events.jsonl`: append-only structured event log and source of truth.
 - `coord.db`: rebuildable SQLite query index.
-- `changes.md`: human-readable change ledger.
-- `reviews.md`: human-readable review report ledger.
-- `tests.md`: human-readable test report ledger.
+- `changes.md`: human-readable change ledger, not a coordination protocol entry point.
+- `reviews.md`: human-readable review report ledger, not a coordination protocol entry point.
+- `tests.md`: human-readable test report ledger, not a coordination protocol entry point.
 - `coord.py`: the preferred structured CLI for locking, event writes, queries, reports, and recovery.
 
 `.agent-coordination/` is runtime state, not the skill itself. Do not commit it to the target repository. The setup script adds it to `.gitignore` by default.
@@ -328,10 +327,6 @@ python3 ~/.codex/skills/agent-coordination/scripts/test_coord.py
 ```
 
 GitHub Actions runs the same baseline checks: `py_compile` and `scripts/test_coord.py`.
-
-## Compatibility
-
-`scripts/watch_changes.py` remains available for older Markdown-only workflows. New workflows should prefer `scripts/coord.py` because it provides structured events, file locking, a SQLite status index, and clearer recovery behavior.
 
 ## Limits
 

@@ -2,7 +2,7 @@
 
 ## Core Idea
 
-Use a local, ignored coordination directory as a structured append-only event log with Markdown compatibility ledgers. Main Codex publishes changes and keeps moving on verified small increments. Other Codex conversations periodically check for change events and respond with review/test reports.
+Use a local, ignored coordination directory as a structured append-only event log with a rebuildable SQLite index and human-readable Markdown ledgers. Main Codex publishes changes and keeps moving on verified small increments. Other Codex conversations periodically check for change events and respond with review/test reports.
 
 This avoids manual copy/paste between agents while keeping all work recoverable after interruptions.
 
@@ -21,13 +21,10 @@ The intended operating mode is unattended after startup. Main Codex may clarify 
   artifacts/
   logs/
   reports/
-  status/
   templates/
 ```
 
-`events.jsonl` is the source of truth. `coord.db` is a rebuildable SQLite status index. `changes.md`, `reviews.md`, and `tests.md` are append-only Markdown compatibility ledgers. `status/*.json` is retained for older `watch_changes.py` workflows.
-
-Order is still part of the Markdown compatibility contract: the newest change entry must be the last `## Change ...` heading in `changes.md`.
+`events.jsonl` is the source of truth. `coord.db` is a rebuildable SQLite status index. `changes.md`, `reviews.md`, and `tests.md` are append-only human-readable ledgers only; agents coordinate through `coord.py`, not by watching Markdown files.
 
 ## CLI Contract
 
@@ -230,8 +227,6 @@ Use this order during active development:
 
 Missing reports mean “pending review,” not “approved.” They should not stop low/medium-risk verified progress unless the user explicitly asks to wait or the next action is unsafe without review.
 
-When appending Markdown manually, write at EOF only. Do not patch against repeated text such as `Open Questions: - none`, because that can insert a newer change into the middle of the ledger and leave older watchers stuck on an older final heading.
-
 If a watcher is interrupted:
 
 1. Run `coord.py open`, then `coord.py next --role <role> --actor <actor>` or `coord.py claim --role <role> --actor <actor>`.
@@ -247,7 +242,6 @@ If a watcher is interrupted:
 - Unknown changes are rejected for lifecycle and report commands.
 - Reviewer/tester work is represented as tasks. Claims use leases so another watcher can pick up expired work.
 - A detected change is not considered processed until the secondary terminal explicitly marks it processed.
-- Empty `changes.md` baseline does not trigger a fake review cycle in legacy mode.
 - If a reviewer/tester crashes after detection but before report write, the pending change remains recoverable through `coord.py next`.
 
 ## Practical Limits

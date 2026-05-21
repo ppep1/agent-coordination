@@ -13,6 +13,6 @@ jobs:
         with:
           python-version: "3.x"
       - name: Compile scripts
-        run: python3 -m py_compile scripts/coord.py scripts/setup_agent_coordination.py scripts/watch_changes.py scripts/test_coord.py
+        run: python3 -m py_compile scripts/coord.py scripts/setup_agent_coordination.py scripts/test_coord.py
       - name: Run coordination self-test
         run: python3 scripts/test_coord.py

@@ -1,6 +1,6 @@
 ---
 name: agent-coordination
-description: Coordinate a primary implementation Codex with reviewer/tester Codex watchers using a local structured event log, SQLite status index, task leases, diff snapshots, and Markdown compatibility ledgers. Use when the user wants Main Codex to keep implementing, testing, committing, and pushing without idle waiting while secondary Codex conversations independently review/test changes and report blockers through local files.
+description: Coordinate a primary implementation Codex with reviewer/tester Codex watchers using a local structured event log, SQLite status index, task leases, diff snapshots, and human-readable Markdown ledgers. Use when the user wants Main Codex to keep implementing, testing, committing, and pushing without idle waiting while secondary Codex conversations independently review/test changes and report blockers through local files.
 ---
 
 # Agent Coordination

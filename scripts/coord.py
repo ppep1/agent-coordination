@@ -448,7 +448,7 @@ def validate_report(role: str, args, findings: List[dict]) -> Optional[str]:
 def cmd_init(args) -> int:
     coord = coord_dir(Path(args.repo))
     with locked(coord):
-        for subdir in ("artifacts", "logs", "reports", "status", "templates"):
+        for subdir in ("artifacts", "logs", "reports", "templates"):
             (coord / subdir).mkdir(parents=True, exist_ok=True)
         event_path(coord).touch(exist_ok=True)
         rebuild(coord)
