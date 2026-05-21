@@ -101,328 +101,93 @@ git pull
 
 ## 第一次在项目里启用
 
-进入你要开发的目标 repo：
+在目标 repo 里初始化协调目录后，就可以启动多 Codex 协作。具体命令统一放在后面的“常用命令速查”。
 
-```bash
-cd /path/to/your/repo
-```
+第一次启用时只需要做三件事：
 
-初始化协调目录：
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/setup_agent_coordination.py --repo .
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . init
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor --strict
-```
-
-确认状态：
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
-```
+1. 进入目标 repo。
+2. 初始化 `.agent-coordination/` 并运行 `doctor --strict`。
+3. 为 Main、Reviewer、Tester 生成对应 role prompt；如果需要 Observer，也生成 Observer prompt。
 
 第一次通常会看到没有 change、没有 blocker。
 
-## 三个 Codex 对话怎么开
+## 四个 Codex 对话怎么开
 
-推荐你在同一个项目里开三个 Codex 对话/会话。它们看到的都是 Codex 聊天界面，区别只是角色提示词不同，并且都通过同一个 `.agent-coordination/` 目录交换状态。
+核心执行角色是 3 个 Codex 对话：Main、Reviewer、Tester。第 4 个 Observer Codex 是可选的，只负责和用户交流状态。
 
-目标工作流是无人值守的：Main Codex 先理清任务和路线，并在开始前做一次预检，找出可能需要人工决策的因素：缺少权限或外部服务、命令有破坏性风险、必须购买/登录/提供凭据、需求本身冲突。你确认路线和这些风险处理方式后，Main 持续执行到最终交付，不在 roadmap 的每个 phase 结束时停下来汇报或等待确认。Reviewer/Tester 两个副 Codex 复制对应提示词启动后，也不再需要人工交互；它们只通过 `coord.py watch/report/mark-processed` 工作。你可以随时用 `status/open/blockers/timeline/export-html` 观察它们做了什么。
+这些对话看到的都是普通 Codex 聊天界面，区别是角色提示词不同。它们通过同一个 `.agent-coordination/` 目录交换状态，不靠你在聊天之间复制粘贴结果。
 
-正常的代码修改、读取项目文件、运行本地测试、运行非破坏性构建/格式化检查、提交和推送，在用户已经授权交付的情况下不应触发中途确认。真正无法由 skill 解决的是运行环境层面的限制：Codex/app interrupt、上下文限制、系统睡眠、进程退出、应用重启。只要环境持续运行且权限足够，这套循环可以长时间无人值守；它不是跨应用重启的系统 daemon。
+目标工作流是无人值守的：Main Codex 先理清任务和路线，并在开始前做一次预检，找出可能需要人工决策的因素：缺少权限或外部服务、命令有破坏性风险、必须购买/登录/提供凭据、需求本身冲突。你确认路线和这些风险处理方式后，Main 持续执行到最终交付，不在 roadmap 的每个 phase 结束时停下来汇报或等待确认。
 
-### 可选：第 4 个 Observer 终端
-
-如果你想中途查看状态，推荐开一个普通 shell 终端作为 Observer。它不参与协作，不 claim 任务，不写 report，只读查询 `.agent-coordination/`：
-
-```bash
-cd /path/to/your/repo
-
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . timeline chg_0001
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . export-html
-```
-
-也可以中途问 Main Codex “现在状态如何，不要停止，继续做”。这类状态询问不应被当作暂停或重新确认；Main 应简短报告 `status/open/blockers` 后继续。只有明确说“暂停、停止、先别继续、等我确认、换方向、不要提交”才算 interrupt。
+正常的代码修改、读取项目文件、运行本地测试、运行非破坏性构建/格式化检查、提交和推送，在用户已经授权交付的情况下不应触发中途确认。真正无法由 skill 解决的是运行环境层面的限制：Codex/app interrupt、上下文限制、系统睡眠、进程退出、应用重启。
 
 ### 对话 1：Main Codex
 
-Main Codex 负责写代码、运行 targeted verification、发布 change、处理 blocker、提交和推送。
+Main Codex 负责实现、验证、发布 change、处理 blocker、commit/push 和最终用户交付。
 
-给 Main Codex 的提示词可以直接用：
+Main 的关键规则：
 
-```text
-你是 Main Codex。使用 agent-coordination skill。
-
-在这个 repo 中：
-1. 你拥有源码修改、git 状态、验证、提交/推送和最终用户沟通。
-2. 开始前先做一次预检：列出是否存在缺少权限/外部服务、破坏性命令、外部登录/凭据、需求冲突；如果有，先问用户；如果没有，说明正常本地改代码、跑测试、commit/push 将不再逐阶段确认。
-3. 每个实现增量前运行：
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
-4. 每个小增量完成后运行 targeted verification，然后发布 change：
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create --capture-diff --file <file> --summary "<summary>" --verify "<command>" --risk medium
-5. 不要等待 fresh reviewer/tester report 才继续低/中风险 verified increment。
-6. 如果 blockers/fail/blocked 出现，先修，再继续无关工作。
-7. 修复 blocker 后，用 finding resolve 和 report resolve 关闭已处理问题。
-8. 用户确认路线并同意开始后，不要在 roadmap phase 边界停下来汇报、询问是否继续或等待人工确认；把阶段进展写入 change/report 状态，持续推进到最终交付。
-9. 只有预检遗漏的新权限/凭据/破坏性风险、需求冲突、环境中断或用户 interrupt 才需要停下来问人。
-10. 如果用户中途只询问状态，简短报告 status/open/blockers 后继续；不要把状态询问当作暂停。只有用户明确要求暂停、停止、等待确认、换方向或不要提交，才中断无人值守流程。
-11. 最终交付前运行：
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
-   git status --short
-```
-
-也可以直接生成最新版提示词：
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt main
-```
-
-Main 每做完一个小改动，就发布一个 change：
-
-```bash
-pytest tests/test_parser.py
-
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create \
-  --capture-diff \
-  --file src/parser.py \
-  --summary "Add empty input validation" \
-  --verify "pytest tests/test_parser.py" \
-  --risk medium
-```
-
-命令会输出类似：
-
-```text
-chg_0001
-```
-
-这就是 Reviewer/Tester 后续报告要引用的 change id。
+- 开始前做一次 preflight review；如果有权限、凭据、破坏性命令或需求冲突风险，先问用户。
+- 用户确认开始后，不在 phase 边界停下来请求继续；进展写入 coordination 状态后继续推进。
+- 每个有意义的小增量都要验证并发布 change。
+- 不等待 fresh reviewer/tester report 才继续低/中风险 verified increment。
+- 一旦出现有效 `blocking`、`fail`、`blocked`，先处理再做无关工作。
+- 用户只问状态时，简短报告 `status/open/blockers` 后继续；只有明确说暂停、停止、等待确认、换方向或不要提交，才中断无人值守流程。
 
 ### 对话 2：Reviewer Codex
 
-Reviewer Codex 默认只读代码，不改源码。
+Reviewer Codex 是只读审查角色。它复制 role prompt 后进入 watch 循环，发现 change 后 claim、审查、写 review report、mark processed，然后继续 watch。
 
-给 Reviewer Codex 的提示词可以直接用：
+Reviewer 的责任边界：
 
-```text
-你是 Reviewer Codex。使用 agent-coordination skill。
-
-规则：
-1. 不改源码，不 commit，不 push，不 reset，不安装依赖，不跑 broad formatter。
-2. 只做只读代码审查。
-3. 等待并领取新 change：
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --claim --interval 60
-4. 发现新 change 后，读取输出中的 change_id、files、verification、risk、diff_path。
-5. 优先审查 diff 快照，再审查 touched files 和相关契约，只报告真实缺陷、回归、兼容性风险、缺失测试、安全/并发问题。
-6. 发布报告：
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review --actor reviewer-a --change <change_id> --decision pass|concerns|blocking --files-read <file> --finding "severity:file:line:message"
-7. 报告后标记 processed，这会完成已领取的 task：
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed --role reviewer --actor reviewer-a --change <change_id>
-8. 不要在聊天里等待用户确认，也不要要求用户转述结果；报告写入 coord 后直接继续 watch。
-```
-
-也可以直接生成最新版提示词：
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt reviewer --actor reviewer-a
-```
-
-Reviewer 开始等待：
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --claim --interval 60
-```
-
-如果 Main 发布了 change，Reviewer 会看到类似：
-
-```json
-{
-  "seq": 1,
-  "change_id": "chg_0001",
-  "summary": "Add empty input validation",
-  "files": [
-    "src/parser.py"
-  ],
-  "verification": [
-    "pytest tests/test_parser.py"
-  ],
-  "risk": "medium"
-}
-```
-
-如果审查发现非阻塞问题：
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review \
-  --actor reviewer-a \
-  --change chg_0001 \
-  --decision concerns \
-  --files-read src/parser.py \
-  --finding "medium:src/parser.py:42:Missing whitespace-only input case"
-
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed \
-  --role reviewer \
-  --actor reviewer-a \
-  --change chg_0001
-```
-
-如果没有问题：
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review \
-  --actor reviewer-a \
-  --change chg_0001 \
-  --decision pass \
-  --files-read src/parser.py
-
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed \
-  --role reviewer \
-  --actor reviewer-a \
-  --change chg_0001
-```
-
-如果是必须先修的问题：
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review \
-  --actor reviewer-a \
-  --change chg_0001 \
-  --decision blocking \
-  --files-read src/parser.py \
-  --finding "high:src/parser.py:42:Empty input crashes the parser"
-```
+- 不改源码，不 commit/push/reset，不安装依赖，不跑 broad formatter。
+- 只报告真实缺陷、回归、兼容性风险、缺失测试、安全/并发问题。
+- 不要求用户转述结果，也不等待用户确认；报告写入 coordination 状态即可。
 
 ### 对话 3：Tester Codex
 
-Tester Codex 负责真实运行验证，不假装覆盖。
+Tester Codex 负责真实验证。它复制 role prompt 后进入 watch 循环，发现 change 后 claim、运行验证、写 test report、mark processed，然后继续 watch。
 
-给 Tester Codex 的提示词可以直接用：
+Tester 的责任边界：
 
-```text
-你是 Tester Codex。使用 agent-coordination skill。
+- 不改源码，不 commit/push/reset，不安装依赖，不跑破坏性命令。
+- 优先运行 Main 发布 change 时列出的验证命令，再补充 focused tests。
+- 不假装硬件、vendor SDK、外部服务覆盖；没测到就写 `untested` 或 `blocked`。
+- 不要求用户转述结果，也不等待用户确认；报告写入 coordination 状态即可。
 
-规则：
-1. 不改源码，不 commit，不 push，不 reset，不安装依赖，不跑破坏性命令。
-2. 不假装硬件、vendor SDK、外部服务覆盖。
-3. 等待并领取新 change：
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --claim --interval 60
-4. 发现新 change 后，优先运行 change 里列出的 verification command；再根据 touched files 补充 focused tests。
-5. 发布测试报告：
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test --actor tester-a --change <change_id> --decision pass|fail|blocked --command "<command>" --untested "<reason>"
-6. 报告后标记 processed，这会完成已领取的 task：
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed --role tester --actor tester-a --change <change_id>
-7. 不要在聊天里等待用户确认，也不要要求用户转述结果；报告写入 coord 后直接继续 watch。
-```
+### 可选对话 4：Observer Codex
 
-Tester 开始等待：
+Observer Codex 是可选的用户交流角色，适合用轻量模型，例如 GPT-5.4-Mini。它不自动跑项目任务，只读查询 coordination 状态并解释给你。
 
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --claim --interval 60
-```
+Observer 的责任边界：
 
-测试通过：
+- 可以回答“现在做到哪了、有没有 blocker、Reviewer/Tester 做了什么、下一个 change 是什么、HTML 面板在哪里”。
+- 只能运行只读查询：`status`、`open`、`blockers`、`show`、`timeline`、`export-html`。
+- 不 claim 任务，不写 review/test report，不 mark processed，不改源码，不 commit/push。
+- 不指挥 Main 改方向；如果你要改变任务方向，直接对 Main Codex 发明确指令。
 
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test \
-  --actor tester-a \
-  --change chg_0001 \
-  --decision pass \
-  --command "pytest tests/test_parser.py"
-
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed \
-  --role tester \
-  --actor tester-a \
-  --change chg_0001
-```
-
-测试失败：
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test \
-  --actor tester-a \
-  --change chg_0001 \
-  --decision fail \
-  --command "pytest tests/test_parser.py" \
-  --finding "high:tests/test_parser.py:18:Parser regression test fails"
-```
-
-环境缺依赖或外部服务不可用：
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test \
-  --actor tester-a \
-  --change chg_0001 \
-  --decision blocked \
-  --command "pytest tests/test_parser.py" \
-  --untested "pytest is not installed in this environment"
-```
+也可以不用 Observer，直接开一个普通 shell 终端运行只读查询命令。区别是 Observer 会把状态解释成自然语言。
 
 ## Main 怎么处理反馈
 
-Main 随时可以查状态：
+Main 不需要等待每个 change 都拿到 fresh review/test 才继续；但是每轮实现后都要查 `blockers/open/status`。
 
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
-```
+如果 Reviewer 或 Tester 写入有效 blocker，Main 应该先修复，再发布新的 change，并关闭已经处理的 finding/report。迟到的 blocker 如果发生在 commit/push 之后，也用后续 change 修复。
 
-如果看到：
+缺失报告表示“还在 pending review/test”，不是 approval。对于低/中风险且已经本地验证的增量，Main 可以继续推进；对于高风险改动，Main 应更保守地等待或主动检查状态。
 
-```text
-rpt_abc123 chg_0001 reviewer:blocking actor=reviewer-a
-fnd_def456 chg_0001 high src/parser.py:42 Empty input crashes the parser
-```
+## 如何观察当前状态
 
-Main 应该先修这个问题，发布新的 change：
+推荐用 Observer Codex 或普通 shell 终端观察，不要打断 Main/Reviewer/Tester 的执行循环。
 
-```bash
-pytest tests/test_parser.py
+常用观察入口：
 
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create \
-  --capture-diff \
-  --file src/parser.py \
-  --file tests/test_parser.py \
-  --summary "Handle empty and whitespace-only parser input" \
-  --verify "pytest tests/test_parser.py" \
-  --risk low
-```
-
-然后关闭旧 finding 和 report：
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . finding resolve fnd_def456 --reason "Fixed in chg_0002"
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report resolve rpt_abc123 --reason "Fixed and verified in chg_0002"
-```
-
-再确认：
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
-```
-
-输出：
-
-```text
-No open blockers.
-```
-
-如果要给人看当前协作状态，可以导出 HTML 面板：
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . export-html
-```
-
-默认输出到 `.agent-coordination/reports/status.html`。
+- `status`：整体状态。
+- `open`：还未完成 review/test 的 change。
+- `blockers`：当前阻塞问题。
+- `show <change>`：单个 change 的详情。
+- `timeline <change>`：单个 change 的事件时间线。
+- `export-html`：导出 HTML 状态面板。
 
 ## 推荐日常循环
 
@@ -444,6 +209,7 @@ Main 不需要等每个 change 都拿到 fresh review/test 才继续；但是一
 ```bash
 # 初始化 / 修复
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --version
+python3 ~/.codex/skills/agent-coordination/scripts/setup_agent_coordination.py --repo .
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . init
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . rebuild
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
@@ -456,6 +222,7 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . next --role tester --actor tester-a
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . show chg_0001
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . timeline chg_0001
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . export-html
 
 # 任务 claim / lease
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . claim --role reviewer --actor reviewer-a --ttl 900
@@ -471,10 +238,11 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change push
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review --change chg_0001 --decision pass
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test --change chg_0001 --decision pass --command "pytest"
 
-# 提示词和面板
+# 提示词
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt main
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt reviewer --actor reviewer-a
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . export-html
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt tester --actor tester-a
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt observer --actor observer-a
 
 # 关闭已处理问题
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . finding resolve fnd_abc123 --reason "Fixed in chg_0002"
@@ -499,6 +267,6 @@ GitHub Actions 也会运行同一组基础检查：`py_compile` 和 `scripts/tes
 
 - 这不是常驻 daemon，也不是云端 agent 编排平台；无法绕过 Codex/app interrupt、上下文限制、系统睡眠、进程退出或应用重启。
 - 权限、破坏性命令、外部登录/凭据、需求冲突应在 Main 开始前预检并一次性询问；正常改代码、跑本地测试、提交和推送不应在每个 phase 打断。
-- 需要你为 Reviewer/Tester 分别启动 Codex 对话/会话并给出对应角色提示词。
+- 需要你为 Reviewer/Tester 分别启动 Codex 对话/会话并给出对应角色提示词；Observer 是可选的第 4 个 Codex 对话。
 - 任务 lease 只在本地协调目录内生效，不是跨机器分布式锁。
 - 当前文件锁使用 Unix `fcntl`，适合 macOS/Linux。

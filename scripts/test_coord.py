@@ -204,6 +204,10 @@ def main() -> int:
         tester_prompt = run_cmd("prompt", "tester", "--actor", "tester-z", repo=repo)
         assert_contains(tester_prompt.stdout, "tester-z")
         assert_contains(tester_prompt.stdout, "Do not ask the user to relay results")
+        observer_prompt = run_cmd("prompt", "observer", "--actor", "observer-z", repo=repo)
+        assert_contains(observer_prompt.stdout, "Observer Codex")
+        assert_contains(observer_prompt.stdout, "lightweight model")
+        assert_contains(observer_prompt.stdout, "Do not edit source files, claim tasks")
 
         html_report = run_cmd("export-html", repo=repo).stdout.strip()
         html_path = Path(html_report)

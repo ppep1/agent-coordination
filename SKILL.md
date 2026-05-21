@@ -31,6 +31,7 @@ Use `coord.py prompt` to generate role prompts for extra Codex conversations:
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt main
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt reviewer --actor reviewer-a
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt tester --actor tester-a
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt observer --actor observer-a
 ```
 
 ## Main Loop
@@ -99,6 +100,8 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . timeline ch
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . export-html
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . rebuild
 ```
+
+Optional Observer Codex conversations are read-only status explainers for the user. They may run `status`, `open`, `blockers`, `show`, `timeline`, and `export-html`; they must not edit source, claim tasks, publish reports, mark tasks processed, commit, push, or direct Main/Reviewer/Tester.
 
 Resolve handled blockers:
 

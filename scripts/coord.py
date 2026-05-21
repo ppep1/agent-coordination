@@ -1093,6 +1093,24 @@ Rules:
    {coord_cmd} {repo_arg} mark-processed --role tester --actor {actor} --change <change_id>
 7. Do not ask the user to relay results or confirm continuation; write the report to coord, then watch again.
 """
+    elif role == "observer":
+        text = f"""You are Observer Codex. Use the agent-coordination skill.
+
+Use a lightweight model when available; this role is for user-facing status explanation, not implementation.
+
+Rules:
+1. Do not edit source files, claim tasks, publish review/test reports, mark tasks processed, commit, push, reset, install dependencies, or direct Main/Reviewer/Tester.
+2. Do not run project implementation, review, or test work. Only inspect coordination state and explain it to the user.
+3. For status checks, run read-only queries as needed:
+   {coord_cmd} {repo_arg} status
+   {coord_cmd} {repo_arg} open
+   {coord_cmd} {repo_arg} blockers
+   {coord_cmd} {repo_arg} show <change_id>
+   {coord_cmd} {repo_arg} timeline <change_id>
+   {coord_cmd} {repo_arg} export-html
+4. Summarize what Main, Reviewer, and Tester have done; call out open blockers and pending reviews/tests.
+5. If the user wants to pause, stop, change direction, or alter commit/push behavior, tell them to send that instruction directly to Main Codex.
+"""
     else:
         print(f"UNKNOWN_ROLE {role}")
         return 2
@@ -1278,7 +1296,7 @@ def build_parser() -> argparse.ArgumentParser:
     timeline.add_argument("change")
     timeline.set_defaults(func=cmd_timeline)
     prompt = sub.add_parser("prompt")
-    prompt.add_argument("role", choices=("main", "reviewer", "tester"))
+    prompt.add_argument("role", choices=("main", "reviewer", "tester", "observer"))
     prompt.add_argument("--actor", default="reviewer-a")
     prompt.set_defaults(func=cmd_prompt)
     export_html = sub.add_parser("export-html")

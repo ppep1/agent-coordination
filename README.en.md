@@ -101,328 +101,93 @@ Open a new Codex session after installation.
 
 ## Enable It In A Project
 
-Enter the target repository:
+Initialize the coordination directory in the target repository, then start the multi-Codex workflow. Concrete commands are grouped later in the “Command Cheat Sheet”.
 
-```bash
-cd /path/to/your/repo
-```
+First-time setup has three steps:
 
-Initialize coordination:
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/setup_agent_coordination.py --repo .
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . init
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor --strict
-```
-
-Check current state:
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
-```
+1. Enter the target repository.
+2. Initialize `.agent-coordination/` and run `doctor --strict`.
+3. Generate role prompts for Main, Reviewer, and Tester. Generate an Observer prompt too if needed.
 
 Initially there should usually be no changes and no blockers.
 
-## How To Run The Three Codex Conversations
+## How To Run The Four Codex Conversations
 
-Open three Codex conversations/sessions in the same project. They are all normal Codex chat interfaces; the difference is that each one receives a different role prompt and exchanges state through the same `.agent-coordination/` directory.
+The core execution roles are three Codex conversations: Main, Reviewer, and Tester. The fourth Observer Codex is optional and only talks with the user about status.
 
-The intended workflow is unattended after startup: Main Codex first clarifies the task and route, then performs one preflight review before execution. It should identify anything that needs a human decision: missing permissions or external services, destructive-risk commands, purchases/logins/credentials, or conflicting requirements. After you approve the route and how to handle those risks, Main keeps going until final delivery. It should not stop at every roadmap phase boundary to report progress or ask whether to continue. Reviewer/Tester receive their prompts once and then need no further chat interaction; they work through `coord.py watch/report/mark-processed`. You can observe what they did at any time with `status/open/blockers/timeline/export-html`.
+All conversations are normal Codex chat interfaces. The difference is their role prompt. They exchange state through the same `.agent-coordination/` directory instead of relying on you to copy/paste results between chats.
 
-Normal code edits, reading project files, running local tests, running non-destructive build/format checks, committing, and pushing should not trigger mid-run confirmation after the user has authorized delivery. The limits this skill cannot solve are runtime limits: Codex/app interrupts, context limits, system sleep, process exit, and app restarts. As long as the environment keeps running and permissions are sufficient, the loop can run for a long time unattended; it is not a daemon across app restarts.
+The intended workflow is unattended after startup: Main Codex first clarifies the task and route, then performs one preflight review before execution. It should identify anything that needs a human decision: missing permissions or external services, destructive-risk commands, purchases/logins/credentials, or conflicting requirements. After you approve the route and how to handle those risks, Main keeps going until final delivery and should not stop at every roadmap phase boundary to report progress or ask whether to continue.
 
-### Optional: Fourth Observer Terminal
-
-If you want to check status mid-run, use a regular shell terminal as an Observer. It does not participate in coordination, claim tasks, or write reports. It only reads `.agent-coordination/`:
-
-```bash
-cd /path/to/your/repo
-
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . timeline chg_0001
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . export-html
-```
-
-You may also ask Main Codex, “What is the current status? Do not stop; keep going.” A status-only question should not be treated as a pause or reconfirmation. Main should briefly report `status/open/blockers`, then continue. Only explicit instructions such as “pause,” “stop,” “do not continue,” “wait for my confirmation,” “change direction,” or “do not commit” should interrupt the unattended workflow.
+Normal code edits, reading project files, running local tests, running non-destructive build/format checks, committing, and pushing should not trigger mid-run confirmation after the user has authorized delivery. The limits this skill cannot solve are runtime limits: Codex/app interrupts, context limits, system sleep, process exit, and app restarts.
 
 ### Conversation 1: Main Codex
 
-Main Codex owns source edits, targeted verification, change publication, blocker handling, commits, and pushes.
+Main Codex owns implementation, verification, change publication, blocker handling, commits/pushes, and final user delivery.
 
-Use this prompt for Main Codex:
+Main's key rules:
 
-```text
-You are Main Codex. Use the agent-coordination skill.
-
-In this repository:
-1. You own source edits, git state, verification, commits/pushes, and final user communication.
-2. Before starting, perform one preflight review: identify missing permissions/services, destructive-risk commands, external logins/credentials, and conflicting requirements. Ask the user first if any exist; if none exist, state that normal local code edits, tests, commits, and pushes will not be reconfirmed phase by phase.
-3. Before each implementation increment, run:
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
-4. After each small increment, run targeted verification, then publish a change:
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create --capture-diff --file <file> --summary "<summary>" --verify "<command>" --risk medium
-5. Do not wait for fresh reviewer/tester reports before continuing verified low/medium-risk increments.
-6. If blockers/fail/blocked appears, fix it before unrelated work.
-7. After fixing a blocker, close handled findings and reports with finding resolve and report resolve.
-8. After the user approves the route and says to start, do not stop at roadmap phase boundaries to report progress, ask whether to continue, or wait for confirmation; publish phase progress as changes/reports and continue to final delivery.
-9. Stop for human input only for newly discovered permissions/credentials/destructive risk missed by preflight, conflicting requirements, environment interruption, or explicit user interrupt.
-10. If the user only asks for status mid-run, briefly report status/open/blockers and continue; do not treat a status question as a pause. Interrupt the unattended workflow only when the user explicitly asks to pause, stop, wait for confirmation, change direction, or not commit.
-11. Before final handoff, run:
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
-   git status --short
-```
-
-You can also generate the latest prompt:
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt main
-```
-
-After Main finishes a small change, publish it:
-
-```bash
-pytest tests/test_parser.py
-
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create \
-  --capture-diff \
-  --file src/parser.py \
-  --summary "Add empty input validation" \
-  --verify "pytest tests/test_parser.py" \
-  --risk medium
-```
-
-The command prints a change id:
-
-```text
-chg_0001
-```
-
-Reviewer and Tester reports should reference that change id.
+- Perform one preflight review before starting; ask the user first if there are permission, credential, destructive-command, or requirement-conflict risks.
+- After the user approves the start, do not stop at phase boundaries to ask whether to continue; publish progress to coordination state and keep going.
+- Verify and publish a change after each meaningful small increment.
+- Do not wait for fresh reviewer/tester reports before continuing verified low/medium-risk increments.
+- Once a valid `blocking`, `fail`, or `blocked` appears, handle it before unrelated work.
+- If the user only asks for status, briefly report `status/open/blockers` and continue. Interrupt the unattended workflow only when the user explicitly asks to pause, stop, wait for confirmation, change direction, or not commit.
 
 ### Conversation 2: Reviewer Codex
 
-Reviewer Codex reads source files but does not edit them by default.
+Reviewer Codex is a read-only review role. After receiving its role prompt, it enters a watch loop: claim a change, review it, write a review report, mark processed, and keep watching.
 
-Use this prompt for Reviewer Codex:
+Reviewer responsibility boundaries:
 
-```text
-You are Reviewer Codex. Use the agent-coordination skill.
-
-Rules:
-1. Do not edit source files, commit, push, reset, install dependencies, or run broad formatters.
-2. Perform read-only code review only.
-3. Wait for and claim new changes:
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --claim --interval 60
-4. When a change appears, read change_id, files, verification, risk, and diff_path from the output.
-5. Review the diff snapshot first when present, then touched files and relevant contracts. Report only real defects, regressions, compatibility risks, missing tests, security issues, or concurrency issues.
-6. Publish a report:
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review --actor reviewer-a --change <change_id> --decision pass|concerns|blocking --files-read <file> --finding "severity:file:line:message"
-7. After reporting, mark processed; this completes the claimed task:
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed --role reviewer --actor reviewer-a --change <change_id>
-8. Do not wait for chat confirmation or ask the user to relay results; write the report to coord, then watch again.
-```
-
-You can also generate the latest prompt:
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt reviewer --actor reviewer-a
-```
-
-Start watching:
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --claim --interval 60
-```
-
-When Main publishes a change, Reviewer sees:
-
-```json
-{
-  "seq": 1,
-  "change_id": "chg_0001",
-  "summary": "Add empty input validation",
-  "files": [
-    "src/parser.py"
-  ],
-  "verification": [
-    "pytest tests/test_parser.py"
-  ],
-  "risk": "medium"
-}
-```
-
-If Reviewer finds a non-blocking concern:
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review \
-  --actor reviewer-a \
-  --change chg_0001 \
-  --decision concerns \
-  --files-read src/parser.py \
-  --finding "medium:src/parser.py:42:Missing whitespace-only input case"
-
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed \
-  --role reviewer \
-  --actor reviewer-a \
-  --change chg_0001
-```
-
-If Reviewer finds no material issue:
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review \
-  --actor reviewer-a \
-  --change chg_0001 \
-  --decision pass \
-  --files-read src/parser.py
-
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed \
-  --role reviewer \
-  --actor reviewer-a \
-  --change chg_0001
-```
-
-If Reviewer finds an issue Main must fix first:
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review \
-  --actor reviewer-a \
-  --change chg_0001 \
-  --decision blocking \
-  --files-read src/parser.py \
-  --finding "high:src/parser.py:42:Empty input crashes the parser"
-```
+- Do not edit source, commit/push/reset, install dependencies, or run broad formatters.
+- Report only real defects, regressions, compatibility risks, missing tests, security issues, or concurrency issues.
+- Do not ask the user to relay results or confirm continuation; write reports to coordination state.
 
 ### Conversation 3: Tester Codex
 
-Tester Codex runs real validation and records what was not covered.
+Tester Codex performs real validation. After receiving its role prompt, it enters a watch loop: claim a change, run verification, write a test report, mark processed, and keep watching.
 
-Use this prompt for Tester Codex:
+Tester responsibility boundaries:
 
-```text
-You are Tester Codex. Use the agent-coordination skill.
+- Do not edit source, commit/push/reset, install dependencies, or run destructive commands.
+- Run the verification commands published by Main first, then add focused tests based on touched files.
+- Do not fake hardware, vendor SDK, or external-service coverage; record untested or blocked coverage honestly.
+- Do not ask the user to relay results or confirm continuation; write reports to coordination state.
 
-Rules:
-1. Do not edit source files, commit, push, reset, install dependencies, or run destructive commands.
-2. Do not fake hardware, vendor SDK, or external-service coverage.
-3. Wait for and claim new changes:
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --claim --interval 60
-4. When a change appears, run the listed verification command first when safe, then add focused tests based on touched files.
-5. Publish a test report:
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test --actor tester-a --change <change_id> --decision pass|fail|blocked --command "<command>" --untested "<reason>"
-6. After reporting, mark processed; this completes the claimed task:
-   python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed --role tester --actor tester-a --change <change_id>
-7. Do not wait for chat confirmation or ask the user to relay results; write the report to coord, then watch again.
-```
+### Optional Conversation 4: Observer Codex
 
-Start watching:
+Observer Codex is an optional user-facing status role. Use a lightweight model when available, such as GPT-5.4-Mini. It does not automatically run project tasks; it only reads coordination state and explains it to you.
 
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --claim --interval 60
-```
+Observer responsibility boundaries:
 
-If tests pass:
+- It can answer what has happened, whether blockers exist, what Reviewer/Tester did, what the next change is, and where the HTML dashboard is.
+- It may only run read-only queries: `status`, `open`, `blockers`, `show`, `timeline`, and `export-html`.
+- It must not claim tasks, write review/test reports, mark processed, edit source, commit, or push.
+- It must not direct Main to change course. If you want to change task direction, send that instruction directly to Main Codex.
 
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test \
-  --actor tester-a \
-  --change chg_0001 \
-  --decision pass \
-  --command "pytest tests/test_parser.py"
-
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . mark-processed \
-  --role tester \
-  --actor tester-a \
-  --change chg_0001
-```
-
-If tests fail:
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test \
-  --actor tester-a \
-  --change chg_0001 \
-  --decision fail \
-  --command "pytest tests/test_parser.py" \
-  --finding "high:tests/test_parser.py:18:Parser regression test fails"
-```
-
-If dependencies or external services are unavailable:
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test \
-  --actor tester-a \
-  --change chg_0001 \
-  --decision blocked \
-  --command "pytest tests/test_parser.py" \
-  --untested "pytest is not installed in this environment"
-```
+You can also skip Observer and use a regular shell terminal for read-only queries. The difference is that Observer explains the status in natural language.
 
 ## How Main Handles Feedback
 
-Main can check state at any time:
+Main does not need to wait for fresh review/test reports after every change, but it should check `blockers/open/status` after each implementation cycle.
 
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
-```
+If Reviewer or Tester writes a valid blocker, Main should fix it first, publish a new change, and resolve handled findings/reports. If a late blocker arrives after commit/push, fix it in a follow-up change.
 
-If blockers show:
+Missing reports mean pending review/test, not approval. For low/medium-risk increments that have passed local verification, Main can keep moving. For high-risk work, Main should be more conservative and actively inspect state.
 
-```text
-rpt_abc123 chg_0001 reviewer:blocking actor=reviewer-a
-fnd_def456 chg_0001 high src/parser.py:42 Empty input crashes the parser
-```
+## How To Observe Current State
 
-Main fixes the issue and publishes a follow-up change:
+Use Observer Codex or a regular shell terminal to observe state without interrupting the Main/Reviewer/Tester execution loops.
 
-```bash
-pytest tests/test_parser.py
+Common observation entry points:
 
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create \
-  --capture-diff \
-  --file src/parser.py \
-  --file tests/test_parser.py \
-  --summary "Handle empty and whitespace-only parser input" \
-  --verify "pytest tests/test_parser.py" \
-  --risk low
-```
-
-Then Main closes the old finding and report:
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . finding resolve fnd_def456 --reason "Fixed in chg_0002"
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report resolve rpt_abc123 --reason "Fixed and verified in chg_0002"
-```
-
-Confirm blockers are gone:
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
-```
-
-Expected output:
-
-```text
-No open blockers.
-```
-
-To share the current coordination state, export the HTML dashboard:
-
-```bash
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . export-html
-```
-
-The default output is `.agent-coordination/reports/status.html`.
+- `status`: overall state.
+- `open`: changes still pending review/test.
+- `blockers`: current blocking issues.
+- `show <change>`: details for one change.
+- `timeline <change>`: event timeline for one change.
+- `export-html`: export the HTML status dashboard.
 
 ## Recommended Daily Loop
 
@@ -444,6 +209,7 @@ Main does not need to wait for fresh review/test reports after every change. How
 ```bash
 # Initialize / repair
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --version
+python3 ~/.codex/skills/agent-coordination/scripts/setup_agent_coordination.py --repo .
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . init
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . rebuild
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor
@@ -456,6 +222,7 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . next --role tester --actor tester-a
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . show chg_0001
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . timeline chg_0001
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . export-html
 
 # Task claim / lease
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . claim --role reviewer --actor reviewer-a --ttl 900
@@ -471,10 +238,11 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change push
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report review --change chg_0001 --decision pass
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . report test --change chg_0001 --decision pass --command "pytest"
 
-# Prompts and dashboard
+# Prompts
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt main
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt reviewer --actor reviewer-a
-python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . export-html
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt tester --actor tester-a
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt observer --actor observer-a
 
 # Resolve handled issues
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . finding resolve fnd_abc123 --reason "Fixed in chg_0002"
@@ -499,6 +267,6 @@ GitHub Actions runs the same baseline checks: `py_compile` and `scripts/test_coo
 
 - This is not a daemon or cloud orchestration platform; it cannot bypass Codex/app interrupts, context limits, system sleep, process exits, or app restarts.
 - Permissions, destructive-risk commands, external logins/credentials, and conflicting requirements should be found in Main's startup preflight and asked about once; normal code edits, local tests, commits, and pushes should not interrupt every phase.
-- Reviewer and Tester Codex conversations/sessions still need to be started with role-specific prompts.
+- Reviewer and Tester Codex conversations/sessions still need to be started with role-specific prompts; Observer is an optional fourth Codex conversation.
 - Task leases are local coordination-state locks, not distributed locks across machines.
 - File locking currently uses Unix `fcntl`, so macOS/Linux are the intended environments.

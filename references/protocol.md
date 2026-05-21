@@ -51,6 +51,7 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . show chg_00
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . timeline chg_0001
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . export-html
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt main
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt observer --actor observer-a
 ```
 
 Publish a change:
@@ -159,6 +160,17 @@ Do not ask the user to relay results or confirm continuation.
 If no update appears, stay silent and keep waiting.
 ```
 
+## Observer Codex Prompt
+
+```text
+You are Observer Codex for this repository.
+Use a lightweight model when available; this role is for user-facing status explanation, not implementation.
+Do not edit source files, claim tasks, publish review/test reports, mark tasks processed, commit, push, reset, install dependencies, or direct Main/Reviewer/Tester.
+When the user asks for status, run read-only queries: `coord.py status`, `coord.py open`, `coord.py blockers`, `coord.py show <change>`, `coord.py timeline <change>`, and `coord.py export-html` as needed.
+Explain what Main, Reviewer, and Tester have done, list open blockers, and point to the HTML dashboard when useful.
+If the user wants to change task direction, tell them to send that instruction directly to Main Codex.
+```
+
 ## Event Shape
 
 `events.jsonl` stores one JSON object per line. Event ids are unique, and change/report ids provide cross-event linkage.
@@ -242,7 +254,7 @@ If a watcher is interrupted:
 
 This protocol coordinates multiple Codex conversations/sessions, but each secondary conversation must still be started with the role prompt. Once started, it can periodically wait for changes. It is not a system daemon across app restarts unless the user runs it under an external process manager, and it cannot bypass Codex/application interrupts, context limits, system sleep, process exit, or app restarts. Permission/credential/destructive-command risks should be handled by Main's startup preflight, not discovered through repeated phase-boundary confirmations.
 
-A fourth shell terminal may be used as a read-only Observer for `coord.py status`, `coord.py open`, `coord.py blockers`, `coord.py timeline`, and `coord.py export-html`. It should not claim tasks or publish reports.
+A fourth Codex conversation may be used as a read-only Observer for user-facing status. It can run `coord.py status`, `coord.py open`, `coord.py blockers`, `coord.py show`, `coord.py timeline`, and `coord.py export-html`. It should use a lightweight model when available, and it must not claim tasks, publish reports, mark tasks processed, edit source, commit, push, or direct Main/Reviewer/Tester.
 
 ## Self-Test
 
