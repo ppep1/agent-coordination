@@ -7,6 +7,22 @@
 
 A Codex skill for coordinating Main Codex, Reviewer Codex, and Tester Codex through a local structured event log. It is designed for workflows where you run multiple Codex terminals but do not want to coordinate them through copy/paste, chat state, or manual waiting.
 
+## How This Differs From Built-In Codex Subagents
+
+Codex's built-in subagent system is already a good fit for many parallel tasks: Main Codex can delegate a specific, bounded task to an explorer or worker subagent, wait for the result, and integrate it. This skill does not replace built-in subagents. It covers a different workflow: multiple independent Codex terminals collaborating around the same repository over time, with recoverable, auditable, queryable state.
+
+| Capability | Built-in Codex subagents | Agent Coordination skill |
+| --- | --- | --- |
+| Typical use | One-shot or short-lived delegation: inspect code, implement a local change, parallelize well-scoped subtasks | Long-running collaboration: Main keeps developing while Reviewer/Tester independently watch, claim, and report |
+| Lifecycle | Created, waited on, and integrated by Main Codex inside the current session | Runs across separate terminals, with state stored in the target repo's `.agent-coordination/` directory |
+| State record | Mostly lives in conversation context and subagent final messages | `events.jsonl` is the source of truth, `coord.db` is queryable, Markdown ledgers are readable |
+| Recovery | Works well inside the current task; after session/context changes it depends on Main's memory or summaries | Recover with `status/open/blockers/timeline/doctor --strict` |
+| Review/test ownership | Can be delegated, but results are usually received once by Main Codex | Reviewer/Tester have stable roles, claim/lease, report quality gates, and processed state |
+| Duplicate work control | Main Codex coordinates to avoid duplicate delegation | `claim --ttl` and leases prevent multiple Reviewer/Tester terminals from processing the same change |
+| Audit and handoff | Depends on chat history | Changes, reviews, tests, and resolves are structured events and can be exported to HTML |
+
+In short: built-in subagents are closer to parallel worker threads owned by Main Codex; this skill is a local, file-backed collaboration protocol. If you only need one subagent to inspect code or patch a small module, use built-in subagents. If you want Main/Reviewer/Tester terminals to keep working over time without losing state, this skill is the better fit.
+
 ## What Problem It Solves
 
 The old manual workflow often looks like this:

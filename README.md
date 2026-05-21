@@ -7,6 +7,22 @@
 
 一个 Codex skill，用本地结构化事件日志协调 Main Codex、Reviewer Codex 和 Tester Codex。它适合你想开多个 Codex 终端协同工作，但又不想靠聊天复制粘贴、人工等待和记忆状态来同步的场景。
 
+## 和 Codex 内置子代理有什么区别
+
+Codex 自带的子代理系统已经适合很多并行任务：主 Codex 可以把一个明确、边界清楚的子任务委派给 explorer、worker 这类子代理，然后等待结果并整合。这个 skill 不是替代内置子代理，而是补齐另一类工作流：多个独立 Codex 终端长期围绕同一个 repo 协作，并且需要可恢复、可审计、可查询的状态。
+
+| 能力 | Codex 内置子代理 | Agent Coordination skill |
+| --- | --- | --- |
+| 典型用途 | 单轮或短周期委派：探索代码、实现局部改动、并行处理明确子任务 | 长周期协作：Main 持续开发，Reviewer/Tester 独立 watch、claim、report |
+| 生命周期 | 跟随当前会话，由主 Codex 创建、等待、整合 | 跨多个终端运行，状态落在目标 repo 的 `.agent-coordination/` |
+| 状态记录 | 主要存在于对话和子代理返回结果里 | `events.jsonl` 是真相来源，`coord.db` 可查询，Markdown ledger 可人工阅读 |
+| 恢复能力 | 适合当前任务内恢复；会话/上下文变化后依赖主 Codex 记忆和摘要 | 可运行 `status/open/blockers/timeline/doctor --strict` 恢复现场 |
+| 审查/测试责任 | 可以委派，但结果通常由主 Codex 一次性接收 | Reviewer/Tester 有固定角色、claim/lease、report 质量门槛和 processed 状态 |
+| 防重复处理 | 由主 Codex 调度避免重复 | `claim --ttl` 和 lease 机制避免多个 Reviewer/Tester 处理同一 change |
+| 审计和交接 | 依赖聊天记录 | change、review、test、resolve 都是结构化事件，可导出 HTML |
+
+简单说：内置子代理更像“主 Codex 的并行工作线程”；这个 skill 更像“本地、文件驱动的协作协议”。如果只是让一个子代理读一段代码或改一个小模块，用内置子代理更直接；如果你要长期保持 Main/Reviewer/Tester 三个终端分工、不中断地推进实现和验证，用这个 skill 更合适。
+
 ## 它解决什么问题
 
 你以前可能是这样用的：
