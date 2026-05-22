@@ -1,20 +1,21 @@
 ---
 name: agent-coordination
-description: Coordinate a primary implementation Codex with reviewer/tester Codex watchers using a local structured event log, SQLite status index, task leases, diff snapshots, and human-readable Markdown ledgers. Use when the user wants Main Codex to keep implementing, testing, committing, and pushing without idle waiting while secondary Codex conversations independently review/test changes and report blockers through local files.
+description: Coordinate Main/Coordinator, Developer, Reviewer, Tester, and optional Observer Codex conversations using a local structured event log, SQLite status index, work leases, diff snapshots, and human-readable Markdown ledgers. Use when the user wants Main to plan and route work while Developer implements and Reviewer/Tester independently review/test changes without idle waiting.
 ---
 
 # Agent Coordination
 
-Use this skill to run a multi-Codex workflow in one repository. Main Codex keeps implementation moving; Reviewer/Tester Codex conversations provide asynchronous safety checks through local structured events.
+Use this skill to run a multi-Codex workflow in one repository. Main/Coordinator Codex plans and assigns work; Developer Codex implements; Reviewer/Tester Codex conversations provide asynchronous safety checks through local structured events.
 
 Read `references/protocol.md` when setting up a repo, recovering state, debugging watcher behavior, or writing role prompts. The README files are for human installation and usage.
 
 ## Contract
 
-- **Main Codex** owns source edits, git state, verification, commits/pushes, and user communication.
+- **Main/Coordinator Codex** owns planning, preflight review, task decomposition, route decisions, coordination state, and final user communication.
+- **Developer Codex** owns source edits, focused verification, change publication, and commit/push when allowed by the task/workflow.
 - **Reviewer Codex** performs read-only review for defects, regressions, contract risks, missing tests, security, and concurrency issues.
 - **Tester Codex** runs real validation, records untested areas honestly, and never fakes unavailable hardware/vendor/service coverage.
-- Secondary agents do not edit source files, commit, push, reset, delete files, install dependencies, or run broad formatters unless explicitly granted a narrow write scope.
+- Reviewer/Tester/Observer do not edit source files, commit, push, reset, delete files, install dependencies, or run broad formatters. Developer may edit only within claimed work.
 - Coordination state is local under `.agent-coordination/` and should stay ignored by the target repo.
 
 ## Setup
@@ -29,30 +30,37 @@ Use `coord.py prompt` to generate role prompts for extra Codex conversations:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt main
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt developer --actor developer-a
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt reviewer --actor reviewer-a
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt tester --actor tester-a
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt observer --actor observer-a
 ```
 
-## Main Loop
+## Delegated Loop
 
 ```text
-coord blockers/open/status
--> fix valid blockers first
--> implement one small increment
--> run targeted verification
--> coord change create --capture-diff
--> coord blockers/open/status
--> commit/push when appropriate
--> wait-final before final handoff
--> finish to stop secondary watchers
--> continue to final delivery without phase-boundary approval stops
+Main/Coordinator: task create -> task list/status/open/blockers -> route blockers -> wait-final -> finish
+Developer: task watch -> implement claimed task -> targeted verification -> change create --task --capture-diff -> task complete -> watch
+Reviewer: watch claimed changes -> review report -> mark-processed -> watch
+Tester: watch claimed changes -> test report -> mark-processed -> watch
 ```
 
-Publish changes with:
+Coordinator creates Developer work with:
+
+```bash
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . task create \
+  --title "Short task title" \
+  --details "Implementation instructions" \
+  --acceptance "Verification and acceptance criteria" \
+  --risk medium
+```
+
+Developer publishes changes with:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create \
+  --actor developer-a \
+  --task job_0001 \
   --capture-diff \
   --file src/example.py \
   --summary "Short implementation summary" \
@@ -61,6 +69,8 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change crea
 ```
 
 Missing reports mean “pending review,” not approval. They do not stop verified low/medium-risk progress. Valid `blocking`, `fail`, or `blocked` reports must be handled before unrelated work or final handoff.
+
+Legacy single-Main implementation mode is still available with `coord.py prompt legacy-main`, but delegated mode is the default for unattended work.
 
 ## Reviewer/Tester Loop
 
@@ -91,6 +101,7 @@ Use these before final handoff or after interruption:
 
 ```bash
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . doctor --strict
+python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . task list
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . blockers
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . open
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . status
@@ -105,7 +116,7 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . export-html
 python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . rebuild
 ```
 
-Optional Observer Codex conversations are read-only status explainers for the user. They may run `status`, `open`, `blockers`, `show`, `timeline`, and `export-html`; they must not edit source, claim tasks, publish reports, mark tasks processed, commit, push, or direct Main/Reviewer/Tester.
+Optional Observer Codex conversations are read-only status explainers for the user. They may run `task list`, `status`, `open`, `blockers`, `show`, `timeline`, and `export-html`; they must not edit source, claim tasks, publish reports, mark tasks processed, commit, push, or direct Main/Developer/Reviewer/Tester.
 
 Resolve handled blockers:
 

@@ -19,6 +19,7 @@ SCHEMA = 1
 BLOCKING_DECISIONS = ("blocking", "fail", "blocked")
 BLOCKING_SEVERITIES = ("high", "critical", "blocking")
 CHANGE_RE = re.compile(r"^chg_\d{4,}$")
+JOB_RE = re.compile(r"^job_\d{4,}$")
 EVENT_RE = re.compile(r"^evt_[0-9a-f]{12}$")
 REPORT_RE = re.compile(r"^rpt_[0-9a-f]{12}$")
 FINDING_RE = re.compile(r"^fnd_[0-9a-f]{12}$")
@@ -73,6 +74,7 @@ def connect(coord: Path) -> sqlite3.Connection:
         );
         create table if not exists changes (
           id text primary key,
+          task_id text,
           status text not null,
           actor text not null,
           summary text not null,
@@ -122,8 +124,26 @@ def connect(coord: Path) -> sqlite3.Connection:
           updated_at text not null,
           primary key (role, change_id)
         );
+        create table if not exists work_items (
+          id text primary key,
+          status text not null,
+          title text not null,
+          details text not null,
+          acceptance text not null,
+          risk text,
+          actor text not null,
+          claimed_by text,
+          lease_expires_at text,
+          completed_by text,
+          change_id text,
+          created_at text not null,
+          updated_at text not null
+        );
         """
     )
+    change_columns = {row["name"] for row in conn.execute("pragma table_info(changes)").fetchall()}
+    if "task_id" not in change_columns:
+        conn.execute("alter table changes add column task_id text")
     report_columns = {row["name"] for row in conn.execute("pragma table_info(reports)").fetchall()}
     if "status" not in report_columns:
         conn.execute("alter table reports add column status text not null default 'open'")
@@ -169,14 +189,72 @@ def index_event(coord: Path, event: dict) -> None:
         (event["id"], seq, event["type"], event["actor"], event["ts"], payload),
     )
 
-    if event["type"] == "change.created":
+    if event["type"] == "work.created":
         conn.execute(
             """
-            insert or replace into changes(id, status, actor, summary, risk, created_at)
-            values(?, ?, ?, ?, ?, ?)
+            insert or replace into work_items(
+              id, status, title, details, acceptance, risk, actor, created_at, updated_at
+            )
+            values(?, 'pending', ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event["task_id"],
+                event.get("title", ""),
+                event.get("details", ""),
+                event.get("acceptance", ""),
+                event.get("risk", ""),
+                event["actor"],
+                event["ts"],
+                event["ts"],
+            ),
+        )
+    elif event["type"] == "work.claimed":
+        conn.execute(
+            """
+            update work_items
+            set status = 'claimed',
+                claimed_by = ?,
+                lease_expires_at = ?,
+                updated_at = ?
+            where id = ?
+            """,
+            (event["actor"], event["lease_expires_at"], event["ts"], event["task_id"]),
+        )
+    elif event["type"] == "work.released":
+        conn.execute(
+            """
+            update work_items
+            set status = 'pending',
+                claimed_by = null,
+                lease_expires_at = null,
+                updated_at = ?
+            where id = ? and status != 'completed'
+            """,
+            (event["ts"], event["task_id"]),
+        )
+    elif event["type"] == "work.completed":
+        conn.execute(
+            """
+            update work_items
+            set status = 'completed',
+                claimed_by = null,
+                lease_expires_at = null,
+                completed_by = ?,
+                change_id = coalesce(?, change_id),
+                updated_at = ?
+            where id = ?
+            """,
+            (event["actor"], event.get("change_id"), event["ts"], event["task_id"]),
+        )
+    elif event["type"] == "change.created":
+        conn.execute(
+            """
+            insert or replace into changes(id, task_id, status, actor, summary, risk, created_at)
+            values(?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event["change_id"],
+                event.get("task_id"),
                 event.get("status", "ready-for-review"),
                 event["actor"],
                 event.get("summary", ""),
@@ -278,6 +356,15 @@ def index_event(coord: Path, event: dict) -> None:
             """,
             (event["role"], event["change_id"], event["actor"], event["ts"]),
         )
+    if event["type"] == "change.created" and event.get("task_id"):
+        conn.execute(
+            """
+            update work_items
+            set change_id = ?, updated_at = ?
+            where id = ? and change_id is null
+            """,
+            (event["change_id"], event["ts"], event["task_id"]),
+        )
 
     conn.commit()
     conn.close()
@@ -308,9 +395,29 @@ def next_change_id(coord: Path) -> str:
     return f"chg_{int(row['n'] or 0) + 1:04d}"
 
 
+def next_task_id(coord: Path) -> str:
+    conn = connect(coord)
+    row = conn.execute(
+        """
+        select max(cast(substr(id, 5) as integer)) as n
+        from work_items
+        where id glob 'job_[0-9][0-9][0-9][0-9]*'
+        """
+    ).fetchone()
+    conn.close()
+    return f"job_{int(row['n'] or 0) + 1:04d}"
+
+
 def change_exists(coord: Path, change_id: str) -> bool:
     conn = connect(coord)
     row = conn.execute("select 1 from changes where id = ?", (change_id,)).fetchone()
+    conn.close()
+    return row is not None
+
+
+def task_exists(coord: Path, task_id: str) -> bool:
+    conn = connect(coord)
+    row = conn.execute("select 1 from work_items where id = ?", (task_id,)).fetchone()
     conn.close()
     return row is not None
 
@@ -340,6 +447,7 @@ def load_change_event(conn: sqlite3.Connection, change_id: str) -> Optional[dict
 def format_change_payload(event: dict, seq: Optional[int] = None) -> dict:
     payload = {
         "change_id": event["change_id"],
+        "task_id": event.get("task_id", ""),
         "summary": event.get("summary", ""),
         "files": event.get("files", []),
         "verification": event.get("verification", []),
@@ -349,6 +457,20 @@ def format_change_payload(event: dict, seq: Optional[int] = None) -> dict:
     if seq is not None:
         payload = {"seq": seq, **payload}
     return payload
+
+
+def format_task_payload(row: sqlite3.Row) -> dict:
+    return {
+        "task_id": row["id"],
+        "status": row["status"],
+        "title": row["title"],
+        "details": row["details"],
+        "acceptance": row["acceptance"],
+        "risk": row["risk"] or "",
+        "claimed_by": row["claimed_by"] or "",
+        "lease_expires_at": row["lease_expires_at"] or "",
+        "change_id": row["change_id"] or "",
+    }
 
 
 def markdown_change_id(change_id: str) -> str:
@@ -475,10 +597,165 @@ def cmd_rebuild(args) -> int:
     return 0
 
 
+def cmd_task_create(args) -> int:
+    coord = coord_dir(Path(args.repo))
+    with locked(coord):
+        task_id = args.id or next_task_id(coord)
+        append_event(
+            coord,
+            "work.created",
+            args.actor,
+            {
+                "task_id": task_id,
+                "title": args.title,
+                "details": args.details,
+                "acceptance": args.acceptance,
+                "risk": args.risk,
+            },
+        )
+    print(task_id)
+    return 0
+
+
+def cmd_task_list(args) -> int:
+    coord = coord_dir(Path(args.repo))
+    conn = connect(coord)
+    where = "" if args.all else "where status != 'completed'"
+    rows = conn.execute(
+        f"""
+        select *
+        from work_items
+        {where}
+        order by created_at
+        limit ?
+        """,
+        (args.limit,),
+    ).fetchall()
+    conn.close()
+    if not rows:
+        print("No open tasks.")
+        return 0
+    for row in rows:
+        owner = f" claimed_by={row['claimed_by']}" if row["claimed_by"] else ""
+        change = f" change={row['change_id']}" if row["change_id"] else ""
+        print(f"{row['id']} {row['status']}{owner}{change} risk={row['risk'] or '-'}")
+        print(f"  {row['title']}")
+    return 0
+
+
+def cmd_task_claim(args) -> int:
+    coord = coord_dir(Path(args.repo))
+    with locked(coord):
+        conn = connect(coord)
+        current_time = now_iso()
+        params = [args.actor, current_time]
+        task_filter = ""
+        if args.task:
+            task_filter = "and id = ?"
+            params.append(args.task)
+        row = conn.execute(
+            f"""
+            select *
+            from work_items
+            where status != 'completed'
+              and (
+                status = 'pending'
+                or claimed_by = ?
+                or lease_expires_at <= ?
+              )
+              {task_filter}
+            order by created_at
+            limit 1
+            """,
+            params,
+        ).fetchone()
+        if not row:
+            conn.close()
+            if not getattr(args, "quiet", False):
+                print("NO_CLAIMABLE_TASK")
+            return 2
+        task_id = row["id"]
+        lease_expires_at = add_seconds_iso(args.ttl)
+        conn.close()
+        append_event(
+            coord,
+            "work.claimed",
+            args.actor,
+            {
+                "task_id": task_id,
+                "lease_expires_at": lease_expires_at,
+                "ttl": args.ttl,
+            },
+        )
+    payload = format_task_payload(row)
+    payload.update({"claimed_by": args.actor, "lease_expires_at": lease_expires_at})
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def cmd_task_release(args) -> int:
+    coord = coord_dir(Path(args.repo))
+    with locked(coord):
+        conn = connect(coord)
+        row = conn.execute("select status, claimed_by from work_items where id = ?", (args.task,)).fetchone()
+        conn.close()
+        if not row:
+            print(f"UNKNOWN_TASK {args.task}")
+            return 2
+        if row["status"] != "claimed":
+            print("TASK_NOT_CLAIMED")
+            return 2
+        if row["claimed_by"] != args.actor and not args.force:
+            print(f"CLAIMED_BY {row['claimed_by']}")
+            return 2
+        append_event(coord, "work.released", args.actor, {"task_id": args.task})
+    print(f"RELEASED {args.task}")
+    return 0
+
+
+def cmd_task_complete(args) -> int:
+    coord = coord_dir(Path(args.repo))
+    with locked(coord):
+        conn = connect(coord)
+        row = conn.execute("select status, claimed_by, lease_expires_at from work_items where id = ?", (args.task,)).fetchone()
+        conn.close()
+        if not row:
+            print(f"UNKNOWN_TASK {args.task}")
+            return 2
+        if row["status"] == "claimed" and row["claimed_by"] != args.actor and row["lease_expires_at"] > now_iso():
+            print(f"TASK_CLAIMED_BY {row['claimed_by']}")
+            return 2
+        if args.change and not change_exists(coord, args.change):
+            print(f"UNKNOWN_CHANGE {args.change}")
+            return 2
+        append_event(coord, "work.completed", args.actor, {"task_id": args.task, "change_id": args.change})
+    print(f"TASK_COMPLETED {args.task}")
+    return 0
+
+
+def cmd_task_watch(args) -> int:
+    deadline = time.time() + args.timeout if args.timeout else None
+    while True:
+        if session_finished(coord_dir(Path(args.repo))):
+            print("SESSION_FINISHED")
+            return 0
+        args.quiet = args.quiet or not args.once
+        rc = cmd_task_claim(args)
+        if rc == 0 or args.once:
+            return rc
+        if deadline and time.time() >= deadline:
+            print("WATCH_TIMEOUT")
+            return 2
+        time.sleep(args.interval)
+
+
 def cmd_change_create(args) -> int:
     repo = Path(args.repo).expanduser().resolve()
     coord = coord_dir(repo)
     with locked(coord):
+        if args.task and not task_exists(coord, args.task):
+            print(f"UNKNOWN_TASK {args.task}")
+            return 2
         change_id = args.id or next_change_id(coord)
         diff_path = ""
         if args.capture_diff:
@@ -493,6 +770,7 @@ def cmd_change_create(args) -> int:
             args.actor,
             {
                 "change_id": change_id,
+                "task_id": args.task,
                 "status": "ready-for-review",
                 "files": args.file,
                 "summary": args.summary,
@@ -557,6 +835,16 @@ def cmd_report(args, role: str) -> int:
 def cmd_status(args) -> int:
     coord = coord_dir(Path(args.repo))
     conn = connect(coord)
+    work_rows = conn.execute(
+        """
+        select id, status, title, coalesce(claimed_by, '') as claimed_by, coalesce(change_id, '') as change_id
+        from work_items
+        where status != 'completed'
+        order by created_at
+        limit ?
+        """,
+        (args.limit,),
+    ).fetchall()
     rows = conn.execute(
         """
         select c.id, c.status, c.summary,
@@ -579,10 +867,20 @@ def cmd_status(args) -> int:
         """,
         (args.limit,),
     ).fetchall()
+    if work_rows:
+        print("Open work:")
+        for row in work_rows:
+            owner = f" claimed_by={row['claimed_by']}" if row["claimed_by"] else ""
+            change = f" change={row['change_id']}" if row["change_id"] else ""
+            print(f"{row['id']} {row['status']}{owner}{change}")
+            print(f"  {row['title']}")
     if not rows:
-        print("No changes.")
+        if not work_rows:
+            print("No changes.")
         conn.close()
         return 0
+    if work_rows:
+        print("Changes:")
     for row in rows:
         print(f"{row['id']} {row['status']} blockers={row['blockers']} tasks={row['tasks'] or '-'} reports={row['reports'] or '-'}")
         print(f"  {row['summary']}")
@@ -866,6 +1164,14 @@ def cmd_open(args) -> int:
 
 def final_state(coord: Path) -> tuple[bool, list[str]]:
     conn = connect(coord)
+    open_work = conn.execute(
+        """
+        select id, status, title, coalesce(claimed_by, '') as claimed_by
+        from work_items
+        where status != 'completed'
+        order by created_at
+        """
+    ).fetchall()
     open_tasks = conn.execute(
         """
         select role, change_id, status, coalesce(claimed_by, '') as claimed_by
@@ -894,6 +1200,9 @@ def final_state(coord: Path) -> tuple[bool, list[str]]:
     ).fetchall()
     conn.close()
     details = []
+    for row in open_work:
+        owner = f" claimed_by={row['claimed_by']}" if row["claimed_by"] else ""
+        details.append(f"WORK {row['id']} {row['status']}{owner} {row['title']}")
     for row in open_tasks:
         owner = f" claimed_by={row['claimed_by']}" if row["claimed_by"] else ""
         details.append(f"TASK {row['change_id']} {row['role']}:{row['status']}{owner}")
@@ -998,7 +1307,7 @@ def cmd_doctor(args) -> int:
     coord = coord_dir(Path(args.repo))
     problems = []
     event_count = 0
-    strict_state = {"changes": set(), "reports": set(), "findings": set()}
+    strict_state = {"changes": set(), "reports": set(), "findings": set(), "work": set()}
     if not coord.exists():
         problems.append(f"missing coordination directory: {coord}")
     events = event_path(coord)
@@ -1061,7 +1370,26 @@ def validate_event_strict(event: dict, lineno: int, state: dict) -> List[str]:
             problems.append(f"events.jsonl:{lineno}: verification must be a list")
         if change_id in state["changes"]:
             problems.append(f"events.jsonl:{lineno}: duplicate change_id {change_id}")
+        task_id = event.get("task_id")
+        if task_id and task_id not in state.setdefault("work", set()):
+            problems.append(f"events.jsonl:{lineno}: unknown task_id {task_id}")
         state["changes"].add(change_id)
+    elif event_type == "work.created":
+        problems.extend(require_fields(event, lineno, ["task_id", "title", "details", "acceptance", "risk"]))
+        task_id = event.get("task_id", "")
+        if not JOB_RE.match(str(task_id)):
+            problems.append(f"events.jsonl:{lineno}: invalid task_id {task_id}")
+        if task_id in state.setdefault("work", set()):
+            problems.append(f"events.jsonl:{lineno}: duplicate task_id {task_id}")
+        state["work"].add(task_id)
+    elif event_type in ("work.claimed", "work.released", "work.completed"):
+        problems.extend(require_fields(event, lineno, ["task_id"]))
+        if event.get("task_id") not in state.setdefault("work", set()):
+            problems.append(f"events.jsonl:{lineno}: unknown task_id {event.get('task_id')}")
+        if event_type == "work.claimed" and "lease_expires_at" not in event:
+            problems.append(f"events.jsonl:{lineno}: work.claimed missing lease_expires_at")
+        if event_type == "work.completed" and event.get("change_id") and event.get("change_id") not in state["changes"]:
+            problems.append(f"events.jsonl:{lineno}: unknown change_id {event.get('change_id')}")
     elif event_type in ("change.verified", "change.committed", "change.pushed"):
         problems.extend(require_fields(event, lineno, ["change_id"]))
         if event.get("change_id") not in state["changes"]:
@@ -1127,7 +1455,54 @@ def cmd_prompt(args) -> int:
     repo_arg = "--repo ."
     role = args.role
     actor = args.actor
-    if role == "main":
+    if role in ("main", "coordinator"):
+        text = f"""You are Main/Coordinator Codex. Use the agent-coordination skill.
+
+In this repository:
+1. You own planning, preflight risk review, task decomposition, route decisions, coordination state, and final user communication.
+2. Do not do implementation work yourself in delegated mode. Assign implementation to Developer Codex with `task create`, then monitor task/change/review/test state. Only make direct source edits for tiny emergency fixes or when the user explicitly switches to simple mode.
+3. Before starting execution, perform one preflight review for missing permissions/services, destructive-risk commands, external logins/credentials, and conflicting requirements. Ask the user before starting if any exist; if none exist, state that normal local code edits, tests, commits, and pushes by Developer will not be reconfirmed phase by phase.
+4. Create focused Developer tasks:
+   {coord_cmd} {repo_arg} task create --actor coordinator --title "<short title>" --details "<implementation details>" --acceptance "<verification and acceptance criteria>" --risk medium
+5. During execution, inspect:
+   {coord_cmd} {repo_arg} task list
+   {coord_cmd} {repo_arg} blockers
+   {coord_cmd} {repo_arg} open
+   {coord_cmd} {repo_arg} status
+6. Do not wait for fresh reviewer/tester reports before assigning the next verified low/medium-risk task when no blockers exist.
+7. If blockers/fail/blocked appears, create or direct a Developer fix task before unrelated work.
+8. After a Developer fix handles a blocker, close handled findings and reports with finding resolve and report resolve.
+9. Use show/open/timeline/task list when you need detail.
+10. After the user approves the route and says to start, do not stop at roadmap phase boundaries to report progress, ask whether to continue, or wait for confirmation; publish/inspect coordination state and continue to final delivery.
+11. Stop for human input only for newly discovered permissions/credentials/destructive risk missed by preflight, conflicting requirements, environment interruption, or explicit user interrupt.
+12. If the user only asks for status mid-run, briefly report task list/status/open/blockers and continue; do not treat a status question as a pause. Interrupt the unattended workflow only when the user explicitly asks to pause, stop, wait for confirmation, change direction, or not commit.
+13. After all Developer tasks, implementation verification, commit, and push are complete, wait for the final review/test cycle, then signal secondary agents to stop before sending the final user response:
+   {coord_cmd} {repo_arg} wait-final --timeout 1800 --interval 30
+   {coord_cmd} {repo_arg} doctor
+   {coord_cmd} {repo_arg} blockers
+   git status --short
+   {coord_cmd} {repo_arg} finish --actor coordinator
+"""
+    elif role == "developer":
+        text = f"""You are Developer Codex. Use the agent-coordination skill.
+
+Rules:
+1. You own implementation, focused local verification, change publication, and commit/push when the Coordinator task asks for it or the repo workflow expects it.
+2. Do not do final user communication, route planning, or reviewer/tester work.
+3. Wait for and claim Developer work:
+   {coord_cmd} {repo_arg} task watch --actor {actor} --interval 60 --quiet
+4. When a task appears, read task_id, title, details, acceptance, and risk from the output. Implement only that task and any directly required fix.
+5. Run targeted verification listed or implied by the task acceptance criteria.
+6. Publish the implementation as a change linked to the task:
+   {coord_cmd} {repo_arg} change create --actor {actor} --task <task_id> --capture-diff --file <file> --summary "<summary>" --verify "<command>" --risk medium
+7. Mark the Developer task complete after publishing the change:
+   {coord_cmd} {repo_arg} task complete --actor {actor} --task <task_id> --change <change_id>
+8. Check blockers/open/status before claiming unrelated new work. If Reviewer/Tester reports a valid blocker for your change, fix it and publish a new linked change or follow the Coordinator's fix task.
+9. Do not ask the user to relay results or confirm continuation; write progress to coordination state, then watch again.
+10. If task watch prints SESSION_FINISHED, stop and do not restart the watch loop.
+11. While waiting, stay silent. Do not send periodic "still waiting" chat messages.
+"""
+    elif role == "legacy-main":
         text = f"""You are Main Codex. Use the agent-coordination skill.
 
 In this repository:
@@ -1195,17 +1570,18 @@ Rules:
 Use a lightweight model when available; this role is for user-facing status explanation, not implementation.
 
 Rules:
-1. Do not edit source files, claim tasks, publish review/test reports, mark tasks processed, commit, push, reset, install dependencies, or direct Main/Reviewer/Tester.
+1. Do not edit source files, claim tasks, publish review/test reports, mark tasks processed, commit, push, reset, install dependencies, or direct Main/Developer/Reviewer/Tester.
 2. Do not run project implementation, review, or test work. Only inspect coordination state and explain it to the user.
 3. For status checks, run read-only queries as needed:
+   {coord_cmd} {repo_arg} task list
    {coord_cmd} {repo_arg} status
    {coord_cmd} {repo_arg} open
    {coord_cmd} {repo_arg} blockers
    {coord_cmd} {repo_arg} show <change_id>
    {coord_cmd} {repo_arg} timeline <change_id>
    {coord_cmd} {repo_arg} export-html
-4. Summarize what Main, Reviewer, and Tester have done; call out open blockers and pending reviews/tests.
-5. If the user wants to pause, stop, change direction, or alter commit/push behavior, tell them to send that instruction directly to Main Codex.
+4. Summarize what Main/Coordinator, Developer, Reviewer, and Tester have done; call out open Developer work, blockers, and pending reviews/tests.
+5. If the user wants to pause, stop, change direction, or alter commit/push behavior, tell them to send that instruction directly to Main/Coordinator Codex.
 """
     else:
         print(f"UNKNOWN_ROLE {role}")
@@ -1221,6 +1597,7 @@ def html_attr(value: object) -> str:
 def cmd_export_html(args) -> int:
     coord = coord_dir(Path(args.repo))
     conn = connect(coord)
+    work = [dict(row) for row in conn.execute("select * from work_items order by created_at desc").fetchall()]
     changes = [dict(row) for row in conn.execute("select * from changes order by created_at desc").fetchall()]
     tasks = [dict(row) for row in conn.execute("select * from tasks order by change_id, role").fetchall()]
     reports = [dict(row) for row in conn.execute("select * from reports order by created_at desc").fetchall()]
@@ -1306,6 +1683,11 @@ def cmd_export_html(args) -> int:
 <body>
   <h1>Agent Coordination Status</h1>
   <p class="muted">Generated at {html_attr(now_iso())}</p>
+  <h2>Developer Work</h2>
+  <table>
+    <thead><tr><th>Task</th><th>Status</th><th>Title</th><th>Owner</th><th>Change</th></tr></thead>
+    <tbody>{"".join(f"<tr><td>{html_attr(item['id'])}</td><td>{html_attr(item['status'])}</td><td>{html_attr(item['title'])}</td><td>{html_attr(item['claimed_by'] or '-')}</td><td>{html_attr(item['change_id'] or '-')}</td></tr>" for item in work) or '<tr><td colspan="5">No developer work</td></tr>'}</tbody>
+  </table>
   <h2>Changes</h2>
   <table>
     <thead><tr><th>Change</th><th>Status</th><th>Summary</th><th>Tasks</th><th>Reports</th><th>Findings</th></tr></thead>
@@ -1342,6 +1724,46 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--strict", action="store_true")
     doctor.set_defaults(func=cmd_doctor)
 
+    task = sub.add_parser("task")
+    task_sub = task.add_subparsers(dest="task_cmd", required=True)
+    task_create = task_sub.add_parser("create")
+    task_create.add_argument("--id")
+    task_create.add_argument("--actor", default="coordinator")
+    task_create.add_argument("--title", required=True)
+    task_create.add_argument("--details", required=True)
+    task_create.add_argument("--acceptance", required=True)
+    task_create.add_argument("--risk", default="medium")
+    task_create.set_defaults(func=cmd_task_create)
+    task_list = task_sub.add_parser("list")
+    task_list.add_argument("--limit", type=int, default=20)
+    task_list.add_argument("--all", action="store_true")
+    task_list.set_defaults(func=cmd_task_list)
+    task_claim = task_sub.add_parser("claim")
+    task_claim.add_argument("--actor", required=True)
+    task_claim.add_argument("--ttl", type=int, default=1800)
+    task_claim.add_argument("--task")
+    task_claim.add_argument("--quiet", action="store_true")
+    task_claim.set_defaults(func=cmd_task_claim)
+    task_watch = task_sub.add_parser("watch")
+    task_watch.add_argument("--actor", required=True)
+    task_watch.add_argument("--interval", type=float, default=60.0)
+    task_watch.add_argument("--timeout", type=float)
+    task_watch.add_argument("--once", action="store_true")
+    task_watch.add_argument("--ttl", type=int, default=1800)
+    task_watch.add_argument("--task")
+    task_watch.add_argument("--quiet", action="store_true")
+    task_watch.set_defaults(func=cmd_task_watch)
+    task_release = task_sub.add_parser("release")
+    task_release.add_argument("--actor", required=True)
+    task_release.add_argument("--task", required=True)
+    task_release.add_argument("--force", action="store_true")
+    task_release.set_defaults(func=cmd_task_release)
+    task_complete = task_sub.add_parser("complete")
+    task_complete.add_argument("--actor", required=True)
+    task_complete.add_argument("--task", required=True)
+    task_complete.add_argument("--change")
+    task_complete.set_defaults(func=cmd_task_complete)
+
     change = sub.add_parser("change")
     change_sub = change.add_subparsers(dest="change_cmd", required=True)
     create = change_sub.add_parser("create")
@@ -1352,6 +1774,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--verify", action="append", default=[])
     create.add_argument("--risk", default="medium")
     create.add_argument("--capture-diff", action="store_true")
+    create.add_argument("--task", help="Developer work item this change completes, e.g. job_0001")
     create.set_defaults(func=cmd_change_create)
     for name, event_type in (("verify", "change.verified"), ("commit", "change.committed"), ("push", "change.pushed")):
         sp = change_sub.add_parser(name)
@@ -1400,7 +1823,7 @@ def build_parser() -> argparse.ArgumentParser:
     timeline.add_argument("change")
     timeline.set_defaults(func=cmd_timeline)
     prompt = sub.add_parser("prompt")
-    prompt.add_argument("role", choices=("main", "reviewer", "tester", "observer"))
+    prompt.add_argument("role", choices=("main", "coordinator", "developer", "reviewer", "tester", "observer", "legacy-main"))
     prompt.add_argument("--actor", default="reviewer-a")
     prompt.set_defaults(func=cmd_prompt)
     export_html = sub.add_parser("export-html")

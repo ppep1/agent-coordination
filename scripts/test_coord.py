@@ -76,6 +76,31 @@ def main() -> int:
         assert unknown.returncode == 2
         assert_contains(unknown.stdout, "UNKNOWN_CHANGE")
 
+        work = run_cmd(
+            "task",
+            "create",
+            "--title",
+            "Update example value",
+            "--details",
+            "Change src/example.py to return 2.",
+            "--acceptance",
+            "pytest tests/test_example.py is run and the change is published.",
+            "--risk",
+            "medium",
+            repo=repo,
+        ).stdout.strip()
+        assert work == "job_0001"
+        task_list = run_cmd("task", "list", repo=repo)
+        assert_contains(task_list.stdout, "job_0001 pending")
+        work_claim = run_cmd("task", "claim", "--actor", "developer-a", repo=repo)
+        work_payload = json.loads(work_claim.stdout)
+        assert work_payload["task_id"] == work
+        assert work_payload["claimed_by"] == "developer-a"
+        assert_contains(work_payload["acceptance"], "pytest tests/test_example.py")
+        duplicate_work_claim = run_cmd("task", "claim", "--actor", "developer-b", repo=repo, check=False)
+        assert duplicate_work_claim.returncode == 2
+        assert_contains(duplicate_work_claim.stdout, "NO_CLAIMABLE_TASK")
+
         (repo / "src" / "example.py").write_text("def value():\n    return 2\n", encoding="utf-8")
 
         change = run_cmd(
@@ -90,13 +115,19 @@ def main() -> int:
             "pytest tests/test_example.py",
             "--risk",
             "medium",
+            "--task",
+            work,
             repo=repo,
         ).stdout.strip()
         assert change == "chg_0001"
+        run_cmd("task", "complete", "--actor", "developer-a", "--task", work, "--change", change, repo=repo)
+        completed_work = run_cmd("task", "list", "--all", repo=repo)
+        assert_contains(completed_work.stdout, "job_0001 completed")
 
         claim = run_cmd("claim", "--role", "reviewer", "--actor", "reviewer-a", "--ttl", "600", repo=repo)
         claim_payload = json.loads(claim.stdout)
         assert claim_payload["change_id"] == change
+        assert claim_payload["task_id"] == work
         assert claim_payload["claimed_by"] == "reviewer-a"
         assert claim_payload["verification"] == ["pytest tests/test_example.py"]
         assert claim_payload["diff_path"] == "artifacts/chg_0001.diff"
@@ -183,6 +214,7 @@ def main() -> int:
         show = run_cmd("show", change, repo=repo)
         show_payload = json.loads(show.stdout)
         assert show_payload["change"]["id"] == change
+        assert show_payload["change"]["task_id"] == work
         assert show_payload["diff_path"] == "artifacts/chg_0001.diff"
         assert show_payload["tasks"][0]["status"] == "completed"
 
@@ -210,6 +242,13 @@ def main() -> int:
         assert_contains(main_prompt.stdout, "will not be reconfirmed phase by phase")
         assert_contains(main_prompt.stdout, "status/open/blockers")
         assert_contains(main_prompt.stdout, "do not treat a status question as a pause")
+        assert_contains(main_prompt.stdout, "task create")
+        assert_contains(main_prompt.stdout, "Do not do implementation work yourself")
+        developer_prompt = run_cmd("prompt", "developer", "--actor", "developer-z", repo=repo)
+        assert_contains(developer_prompt.stdout, "Developer Codex")
+        assert_contains(developer_prompt.stdout, "task watch --actor developer-z")
+        assert_contains(developer_prompt.stdout, "change create --actor developer-z --task")
+        assert_contains(developer_prompt.stdout, "SESSION_FINISHED")
         reviewer_prompt = run_cmd("prompt", "reviewer", "--actor", "reviewer-z", repo=repo)
         assert_contains(reviewer_prompt.stdout, "reviewer-z")
         assert_contains(reviewer_prompt.stdout, "watch --role reviewer")
