@@ -54,7 +54,7 @@ Main/Coordinator Codex: 规划路线 + 创建 Developer task + 查看状态
 Developer Codex: claim task -> 实现 + 验证 + 发布 change -> task complete
 Reviewer Codex: watch -> 只读审查 -> report -> mark-processed -> watch
 Tester Codex: watch -> 运行测试 -> report -> mark-processed -> watch
-Main/Coordinator Codex: status/open/blockers/task list -> 派发修复或收尾
+Main/Coordinator Codex: task list/status/open/blockers -> 派发修复或收尾
 ```
 
 ## 文件和状态模型
@@ -110,7 +110,7 @@ git pull
 
 1. 进入目标 repo。
 2. 初始化 `.agent-coordination/` 并运行 `doctor --strict`。
-3. 为 Main、Reviewer、Tester 生成对应 role prompt；如果需要 Observer，也生成 Observer prompt。
+3. 为 Main、Developer、Reviewer、Tester 生成对应 role prompt；如果需要 Observer，也生成 Observer prompt。
 
 第一次通常会看到没有 change、没有 blocker。
 
@@ -253,11 +253,11 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt obse
 读取该命令输出的完整 role prompt，并严格按它执行。你只负责回答我的状态问题，不参与实现、审查、测试或任务调度。
 ```
 
-3. 之后你只向 Observer 问状态，例如“现在做到哪了？”、“有没有 blocker？”、“Reviewer/Tester 做了什么？”。
+3. 之后你只向 Observer 问状态，例如“现在做到哪了？”、“有没有 blocker？”、“Developer/Reviewer/Tester 做了什么？”。
 
 Observer 的责任边界：
 
-- 可以回答“现在做到哪了、有没有 blocker、Reviewer/Tester 做了什么、下一个 change 是什么、HTML 面板在哪里”。
+- 可以回答“现在做到哪了、有没有 blocker、Developer/Reviewer/Tester 做了什么、下一个 change 是什么、HTML 面板在哪里”。
 - 只能运行只读查询：`task list`、`status`、`open`、`blockers`、`show`、`timeline`、`export-html`。
 - 不 claim 任务，不写 review/test report，不 mark processed，不改源码，不 commit/push。
 - 不指挥 Main/Developer 改方向；如果你要改变任务方向，直接对 Main/Coordinator Codex 发明确指令。
@@ -274,11 +274,12 @@ Main 不需要等待每个 change 都拿到 fresh review/test 才继续派发低
 
 ## 如何观察当前状态
 
-推荐用 Observer Codex 或普通 shell 终端观察，不要打断 Main/Reviewer/Tester 的执行循环。
+推荐用 Observer Codex 或普通 shell 终端观察，不要打断 Main/Developer/Reviewer/Tester 的执行循环。
 
 常用观察入口：
 
 - `status`：整体状态。
+- `task list`：Developer work 状态。
 - `open`：还未完成 review/test 的 change。
 - `blockers`：当前阻塞问题。
 - `show <change>`：单个 change 的详情。
@@ -375,6 +376,6 @@ GitHub Actions 也会运行同一组基础检查：`ruff check`、`ruff format -
 
 - 这不是常驻 daemon，也不是云端 agent 编排平台；无法绕过 Codex/app interrupt、上下文限制、系统睡眠、进程退出或应用重启。
 - 权限、破坏性命令、外部登录/凭据、需求冲突应在 Main 开始前预检并一次性询问；正常改代码、跑本地测试、提交和推送不应在每个 phase 打断。
-- 需要你为 Reviewer/Tester 分别启动 Codex 对话/会话并给出对应角色提示词；Observer 是可选的第 4 个 Codex 对话。
+- 需要你为 Main/Developer/Reviewer/Tester 分别启动 Codex 对话/会话并给出对应角色提示词；Observer 是可选的第 5 个 Codex 对话。
 - 任务 lease 只在本地协调目录内生效，不是跨机器分布式锁。
 - 当前文件锁使用 Unix `fcntl`，适合 macOS/Linux。

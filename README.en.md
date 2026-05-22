@@ -54,7 +54,7 @@ Main/Coordinator Codex: plan route + create Developer task + inspect state
 Developer Codex: claim task -> implement + verify + publish change -> task complete
 Reviewer Codex: watch -> read-only review -> report -> mark-processed -> watch
 Tester Codex: watch -> run tests -> report -> mark-processed -> watch
-Main/Coordinator Codex: status/open/blockers/task list -> route fixes or finish
+Main/Coordinator Codex: task list/status/open/blockers -> route fixes or finish
 ```
 
 ## Runtime State Model
@@ -110,7 +110,7 @@ First-time setup has three steps:
 
 1. Enter the target repository.
 2. Initialize `.agent-coordination/` and run `doctor --strict`.
-3. Generate role prompts for Main, Reviewer, and Tester. Generate an Observer prompt too if needed.
+3. Generate role prompts for Main, Developer, Reviewer, and Tester. Generate an Observer prompt too if needed.
 
 Initially there should usually be no changes and no blockers.
 
@@ -253,11 +253,11 @@ python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . prompt obse
 Read the full role prompt printed by that command and follow it strictly. Only answer my status questions; do not participate in implementation, review, testing, or task coordination.
 ```
 
-3. Ask Observer status questions such as “What has happened?”, “Are there blockers?”, or “What did Reviewer/Tester do?”.
+3. Ask Observer status questions such as “What has happened?”, “Are there blockers?”, or “What did Developer/Reviewer/Tester do?”.
 
 Observer responsibility boundaries:
 
-- It can answer what has happened, whether blockers exist, what Reviewer/Tester did, what the next change is, and where the HTML dashboard is.
+- It can answer what has happened, whether blockers exist, what Developer/Reviewer/Tester did, what the next change is, and where the HTML dashboard is.
 - It may only run read-only queries: `task list`, `status`, `open`, `blockers`, `show`, `timeline`, and `export-html`.
 - It must not claim tasks, write review/test reports, mark processed, edit source, commit, or push.
 - It must not direct Main/Developer to change course. If you want to change task direction, send that instruction directly to Main/Coordinator Codex.
@@ -274,11 +274,12 @@ Missing reports mean pending review/test, not approval. For low/medium-risk incr
 
 ## How To Observe Current State
 
-Use Observer Codex or a regular shell terminal to observe state without interrupting the Main/Reviewer/Tester execution loops.
+Use Observer Codex or a regular shell terminal to observe state without interrupting the Main/Developer/Reviewer/Tester execution loops.
 
 Common observation entry points:
 
 - `status`: overall state.
+- `task list`: Developer work state.
 - `open`: changes still pending review/test.
 - `blockers`: current blocking issues.
 - `show <change>`: details for one change.
@@ -375,6 +376,6 @@ GitHub Actions runs the same baseline checks: `ruff check`, `ruff format --check
 
 - This is not a daemon or cloud orchestration platform; it cannot bypass Codex/app interrupts, context limits, system sleep, process exits, or app restarts.
 - Permissions, destructive-risk commands, external logins/credentials, and conflicting requirements should be found in Main's startup preflight and asked about once; normal code edits, local tests, commits, and pushes should not interrupt every phase.
-- Reviewer and Tester Codex conversations/sessions still need to be started with role-specific prompts; Observer is an optional fourth Codex conversation.
+- Main/Developer/Reviewer/Tester Codex conversations/sessions still need to be started with role-specific prompts; Observer is an optional fifth Codex conversation.
 - Task leases are local coordination-state locks, not distributed locks across machines.
 - File locking currently uses Unix `fcntl`, so macOS/Linux are the intended environments.

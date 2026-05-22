@@ -21,7 +21,7 @@ def ensure_gitignore(repo: Path, entry: str) -> bool:
     if entry in lines:
         return False
     suffix = "" if existing.endswith("\n") or not existing else "\n"
-    gitignore.write_text(f"{existing}{suffix}\n{entry}\n", encoding="utf-8")
+    gitignore.write_text(f"{existing}{suffix}{entry}\n", encoding="utf-8")
     return True
 
 
@@ -45,7 +45,7 @@ def main() -> int:
     changes = dedent("""\
     # Coordination Changes Ledger
 
-    Main Codex publishes structured changes with `coord.py change create`.
+    Developer Codex publishes structured changes with `coord.py change create`.
 
     """)
 
@@ -70,7 +70,8 @@ def main() -> int:
         "repo": str(repo),
         "events": "events.jsonl",
         "index": "coord.db",
-        "main": {"role": "main-codex"},
+        "main": {"role": "main-coordinator-codex"},
+        "developer": {"role": "developer-codex"},
         "watchers": {
             "reviewer": {"ledger": "reviews.md"},
             "tester": {"ledger": "tests.md"},
@@ -78,28 +79,50 @@ def main() -> int:
     }
 
     main_prompt = dedent(f"""\
-    # Main Codex Prompt
+    # Main/Coordinator Codex Prompt
 
-    You are Main Codex for this repository:
+    You are Main/Coordinator Codex for this repository:
     `{repo}`
 
     Rules:
-    1. Own implementation, git state, verification, commits/pushes, and final user communication.
-    2. Before a new increment, run `coord.py blockers`, `coord.py open`, and `coord.py status`; fix valid blockers first.
-    3. Keep increments small. After each meaningful implementation step, run targeted verification and publish a structured change with `coord.py change create --capture-diff` when the repo is git-backed.
-    4. Treat missing secondary reports as "not reviewed yet", not as approval, but do not idle on verified low/medium-risk increments.
+    1. Own planning, preflight risk review, task decomposition, route decisions, coordination state, and final user communication.
+    2. Do not do business implementation by default. Assign implementation to Developer Codex with `coord.py task create`.
+    3. Before assigning or routing work, run `coord.py task list`, `coord.py blockers`, `coord.py open`, and `coord.py status`; route valid blockers first.
+    4. Treat missing secondary reports as "not reviewed yet", not as approval, but do not idle on low/medium-risk follow-up work when no blocker exists.
     5. Resolve valid blocking findings from review/test reports before unrelated work or final handoff.
-    6. Do not let secondary agents edit source files unless a task explicitly grants a narrow write scope.
-    7. Before final response, run `coord.py doctor`, `coord.py blockers`, and `git status --short`.
+    6. Before final response, run `coord.py wait-final`, `coord.py doctor`, `coord.py blockers`, and `git status --short`, then run `coord.py finish --actor coordinator`.
 
-    Change entry template:
+    Developer task template:
 
     ```bash
-    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . change create --capture-diff \\
-      --file src/example.py \\
-      --summary "Short implementation summary" \\
-      --verify "pytest tests/test_example.py" \\
+    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . task create \\
+      --title "Short task title" \\
+      --details "Implementation details" \\
+      --acceptance "Verification and acceptance criteria" \\
       --risk medium
+    ```
+    """)
+
+    developer_prompt = dedent(f"""\
+    # Developer Codex Prompt
+
+    You are Developer Codex for this repository:
+    `{repo}`
+
+    Rules:
+    1. Own implementation, focused local verification, change publication, and commit/push when the Coordinator task asks for it or the repo workflow expects it.
+    2. Do not own final user communication, route planning, or Reviewer/Tester work.
+    3. Watch and claim Developer work with `coord.py task watch --actor developer-a --quiet`.
+    4. Implement only the claimed task and directly required fixes.
+    5. Run targeted verification from the task acceptance criteria.
+    6. Publish a linked change with `coord.py change create --actor developer-a --task <task_id> --capture-diff`.
+    7. Mark the task complete with `coord.py task complete --actor developer-a --task <task_id> --change <change_id>`.
+    8. If no update appears, stay silent and keep waiting; stop when watch prints `SESSION_FINISHED`.
+
+    Suggested wait command:
+
+    ```bash
+    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . task watch --actor developer-a --interval 60 --quiet
     ```
     """)
 
@@ -115,14 +138,14 @@ def main() -> int:
     3. When a new change appears, inspect the diff snapshot when present, touched files, and relevant contracts only.
     4. Report concrete bugs, regressions, missing tests, compatibility risks, and unsafe assumptions. Avoid style-only findings unless they hide a real defect.
     5. Publish a review with `coord.py report review`, including `--files-read` for inspected files and `--finding` for material findings.
-    6. Use `pass` only when no material issue remains, `concerns` for non-blocking risks, and `blocking` for issues Main must fix before unrelated work or final handoff.
+    6. Use `pass` only when no material issue remains, `concerns` for non-blocking risks, and `blocking` for issues Main/Coordinator must route to Developer before unrelated work or final handoff.
     7. After writing the review, run `coord.py mark-processed`.
-    8. If no update appears, stay silent and keep waiting.
+    8. If no update appears, stay silent and keep waiting. Stop when watch prints `SESSION_FINISHED`.
 
     Suggested wait command:
 
     ```bash
-    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --claim --interval 60
+    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role reviewer --actor reviewer-a --claim --interval 60 --quiet
     ```
     """)
 
@@ -140,12 +163,12 @@ def main() -> int:
     5. Publish results with `coord.py report test`; include each command with `--command`, use `--untested` for anything not actually covered, and add `--finding` for material failures.
     6. Use `pass` only for commands that actually passed, `fail` for real failures, and `blocked` for missing dependencies, unavailable services, or unsafe commands.
     7. After writing the test report, run `coord.py mark-processed`.
-    8. If no update appears, stay silent and keep waiting.
+    8. If no update appears, stay silent and keep waiting. Stop when watch prints `SESSION_FINISHED`.
 
     Suggested wait command:
 
     ```bash
-    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --claim --interval 60
+    python3 ~/.codex/skills/agent-coordination/scripts/coord.py --repo . watch --role tester --actor tester-a --claim --interval 60 --quiet
     ```
     """)
 
@@ -157,6 +180,7 @@ def main() -> int:
         (coord / "events.jsonl", ""),
         (coord / "state.json", json.dumps(state, indent=2) + "\n"),
         (coord / "templates" / "main-codex-prompt.md", main_prompt),
+        (coord / "templates" / "developer-codex-prompt.md", developer_prompt),
         (coord / "templates" / "reviewer-codex-prompt.md", reviewer_prompt),
         (coord / "templates" / "tester-codex-prompt.md", tester_prompt),
     )

@@ -287,7 +287,7 @@ If a watcher is interrupted:
 
 This protocol coordinates multiple Codex conversations/sessions, but each secondary conversation must still be started with the role prompt. Once started, it can periodically wait for changes. It is not a system daemon across app restarts unless the user runs it under an external process manager, and it cannot bypass Codex/application interrupts, context limits, system sleep, process exit, or app restarts. Permission/credential/destructive-command risks should be handled by Main's startup preflight, not discovered through repeated phase-boundary confirmations.
 
-A fourth Codex conversation may be used as a read-only Observer for user-facing status. It can run `coord.py status`, `coord.py open`, `coord.py blockers`, `coord.py show`, `coord.py timeline`, and `coord.py export-html`. It should use a lightweight model when available, and it must not claim tasks, publish reports, mark tasks processed, edit source, commit, push, or direct Main/Reviewer/Tester.
+A fifth Codex conversation may be used as a read-only Observer for user-facing status. It can run `coord.py task list`, `coord.py status`, `coord.py open`, `coord.py blockers`, `coord.py show`, `coord.py timeline`, and `coord.py export-html`. It should use a lightweight model when available, and it must not claim tasks, publish reports, mark tasks processed, edit source, commit, push, or direct Main/Developer/Reviewer/Tester.
 
 ## Self-Test
 

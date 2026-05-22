@@ -50,6 +50,11 @@ def setup_repo(repo: Path) -> None:
         stderr=subprocess.PIPE,
         check=True,
     )
+    developer_template = repo / ".agent-coordination" / "templates" / "developer-codex-prompt.md"
+    if not developer_template.exists():
+        raise AssertionError("setup did not create developer-codex-prompt.md")
+    if not (repo / ".gitignore").read_text(encoding="utf-8").startswith(".agent-coordination/\n"):
+        raise AssertionError("setup wrote an unexpected .gitignore entry")
     run_cmd("init", repo=repo)
 
 
@@ -90,6 +95,22 @@ def main() -> int:
             repo=repo,
         ).stdout.strip()
         assert work == "job_0001"
+        duplicate_work = run_cmd(
+            "task",
+            "create",
+            "--id",
+            work,
+            "--title",
+            "Duplicate",
+            "--details",
+            "Should not overwrite existing work.",
+            "--acceptance",
+            "Rejected duplicate id.",
+            repo=repo,
+            check=False,
+        )
+        assert duplicate_work.returncode == 2
+        assert_contains(duplicate_work.stdout, "DUPLICATE_TASK job_0001")
         task_list = run_cmd("task", "list", repo=repo)
         assert_contains(task_list.stdout, "job_0001 pending")
         work_claim = run_cmd("task", "claim", "--actor", "developer-a", repo=repo)
@@ -240,7 +261,7 @@ def main() -> int:
         assert_contains(main_prompt.stdout, "preflight review")
         assert_contains(main_prompt.stdout, "roadmap phase boundaries")
         assert_contains(main_prompt.stdout, "will not be reconfirmed phase by phase")
-        assert_contains(main_prompt.stdout, "status/open/blockers")
+        assert_contains(main_prompt.stdout, "task list/status/open/blockers")
         assert_contains(main_prompt.stdout, "do not treat a status question as a pause")
         assert_contains(main_prompt.stdout, "task create")
         assert_contains(main_prompt.stdout, "Do not do implementation work yourself")
@@ -376,6 +397,31 @@ def main() -> int:
         assert strict_bad.returncode == 1
         assert_contains(strict_bad.stdout, "invalid event id")
         assert_contains(strict_bad.stdout, "unknown change_id chg_9999")
+
+    with tempfile.TemporaryDirectory(prefix="coord-duplicate-event-test-") as tmp:
+        repo = Path(tmp)
+        setup_repo(repo)
+        task = run_cmd(
+            "task",
+            "create",
+            "--title",
+            "Duplicate event guard",
+            "--details",
+            "Create one task.",
+            "--acceptance",
+            "Rebuild does not apply duplicated event side effects twice.",
+            repo=repo,
+        ).stdout.strip()
+        events_path = repo / ".agent-coordination" / "events.jsonl"
+        first_event = events_path.read_text(encoding="utf-8").splitlines()[0]
+        with events_path.open("a", encoding="utf-8") as events_file:
+            events_file.write(first_event + "\n")
+        run_cmd("rebuild", repo=repo)
+        task_list = run_cmd("task", "list", repo=repo)
+        assert_contains(task_list.stdout, task)
+        strict_duplicate = run_cmd("doctor", "--strict", repo=repo, check=False)
+        assert strict_duplicate.returncode == 1
+        assert_contains(strict_duplicate.stdout, "indexed_events=1 but events.jsonl has 2")
 
     print("test_coord.py: all checks passed")
     return 0

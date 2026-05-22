@@ -184,10 +184,13 @@ def index_event(coord: Path, event: dict) -> None:
     payload = json.dumps(event, sort_keys=True)
     row = conn.execute("select coalesce(max(seq), 0) + 1 as next_seq from events").fetchone()
     seq = int(row["next_seq"])
-    conn.execute(
+    inserted = conn.execute(
         "insert or ignore into events(id, seq, type, actor, ts, payload) values(?, ?, ?, ?, ?, ?)",
         (event["id"], seq, event["type"], event["actor"], event["ts"], payload),
     )
+    if inserted.rowcount == 0:
+        conn.close()
+        return
 
     if event["type"] == "work.created":
         conn.execute(
@@ -601,6 +604,9 @@ def cmd_task_create(args) -> int:
     coord = coord_dir(Path(args.repo))
     with locked(coord):
         task_id = args.id or next_task_id(coord)
+        if task_exists(coord, task_id):
+            print(f"DUPLICATE_TASK {task_id}")
+            return 2
         append_event(
             coord,
             "work.created",
